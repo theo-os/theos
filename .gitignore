@@ -1,0 +1,12 @@
+bin/
+/root
+/proc
+/sys
+/run
+/tmp
+/dev
+/opt
+zig-cache/
+zig-out/
+.zigmod/
+deps.zig/

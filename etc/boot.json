@@ -1,0 +1,12 @@
+{
+  "mount_file_systems": true,
+  "services": [
+    {
+      "name": "boot-shell",
+      "background": false,
+      "args": [
+        "/bin/tsh"
+      ]
+    }
+  ]
+}
