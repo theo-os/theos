@@ -37,3 +37,9 @@ nt_stub NtTerminateThread, 18
 nt_stub NtDelayExecution, 19
 nt_stub NtQuerySystemTime, 20
 nt_stub NtOpenSection, 21
+nt_stub NtDeviceIoControlFile, 22
+nt_stub NtQueryVirtualMemory, 23
+nt_stub NtYieldExecution, 24
+nt_stub NtClearEvent, 25
+nt_stub NtResetEvent, 26
+nt_stub NtCreateThreadEx, 27

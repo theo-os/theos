@@ -1,0 +1,21 @@
+rust_binary(
+    name = "wimunpack",
+    srcs = glob(["src/**/*.rs"]),
+    crate_root = "src/main.rs",
+    edition = "2024",
+    visibility = ["PUBLIC"],
+    deps = [
+        "//lib/iso9660:iso9660",
+        "//lib/udf:udf",
+        "//lib/wim_lzx:wim_lzx",
+        "third-party//:binrw",
+        "third-party//:bitflags",
+        "third-party//:clap",
+        "third-party//:crc32fast",
+        "third-party//:flate2",
+        "third-party//:lz4_flex",
+        "third-party//:rayon",
+        "third-party//:sha1",
+        "third-party//:thiserror",
+    ],
+)

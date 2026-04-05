@@ -27,4 +27,4 @@ jobs:
           targets: x86_64-unknown-uefi
       - name: Build Buck2 Targets
         run: |
-          buck2 build //kernel:kernel //tools/mkrootfs:mkrootfs //userspace/native_init:native_init
+          buck2 build //...

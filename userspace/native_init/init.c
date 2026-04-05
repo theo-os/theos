@@ -18,11 +18,14 @@ typedef HANDLE *PHANDLE;
 #define STATUS_SUCCESS 0
 #define STATUS_END_OF_FILE ((NTSTATUS)0xC0000011u)
 #define STATUS_TIMEOUT ((NTSTATUS)0x00000102u)
+#define STATUS_INVALID_DEVICE_REQUEST ((NTSTATUS)0xC0000010u)
 #define PROCESS_BASIC_INFORMATION_CLASS 0
+#define MEMORY_BASIC_INFORMATION_CLASS 0
 #define FILE_GENERIC_READ 0x00120089u
 #define FILE_OPEN 0x00000001u
 #define FILE_SYNCHRONOUS_IO_NONALERT 0x00000020u
 #define EVENT_TYPE_NOTIFICATION 0
+#define MEM_COMMIT 0x1000u
 
 typedef struct {
     u16 Length;
@@ -43,6 +46,19 @@ typedef struct {
     NTSTATUS Status;
     unsigned long long Information;
 } IO_STATUS_BLOCK;
+
+typedef struct {
+    unsigned long long BaseAddress;
+    unsigned long long AllocationBase;
+    u32 AllocationProtect;
+    u16 PartitionId;
+    u16 SharedReserved;
+    unsigned long long RegionSize;
+    u32 State;
+    u32 Protect;
+    u32 Type;
+    u32 Padding;
+} MEMORY_BASIC_INFORMATION;
 
 typedef struct {
     unsigned long long Reserved1;
@@ -123,6 +139,7 @@ extern NTSTATUS NtCreateEvent(
     BOOLEAN InitialState
 );
 extern NTSTATUS NtSetEvent(HANDLE EventHandle, long *PreviousState);
+extern NTSTATUS NtResetEvent(HANDLE EventHandle, long *PreviousState);
 extern NTSTATUS NtWaitForSingleObject(HANDLE Handle, BOOLEAN Alertable, i64 *Timeout);
 extern NTSTATUS NtCreateUserProcess(
     PHANDLE ProcessHandle,
@@ -157,6 +174,27 @@ extern NTSTATUS NtMapViewOfSection(
     u32 Win32Protect
 );
 extern NTSTATUS NtUnmapViewOfSection(HANDLE ProcessHandle, void *BaseAddress);
+extern NTSTATUS NtQueryVirtualMemory(
+    HANDLE ProcessHandle,
+    void *BaseAddress,
+    u32 MemoryInformationClass,
+    void *MemoryInformation,
+    SIZE_T MemoryInformationLength,
+    SIZE_T *ReturnLength
+);
+extern NTSTATUS NtYieldExecution(void);
+extern NTSTATUS NtDeviceIoControlFile(
+    HANDLE FileHandle,
+    HANDLE Event,
+    void *ApcRoutine,
+    void *ApcContext,
+    IO_STATUS_BLOCK *IoStatusBlock,
+    u32 IoControlCode,
+    void *InputBuffer,
+    u32 InputBufferLength,
+    void *OutputBuffer,
+    u32 OutputBufferLength
+);
 extern NTSTATUS NtTerminateProcess(HANDLE ProcessHandle, NTSTATUS ExitStatus);
 
 static void init_unicode_string(UNICODE_STRING *out, u16 *buffer) {
@@ -228,6 +266,8 @@ void start(void) {
     i64 delay_interval = -100000;
     void *mapped_base = NULL;
     SIZE_T mapped_size = 0;
+    MEMORY_BASIC_INFORMATION mbi;
+    SIZE_T mbi_len = 0;
 
     init_unicode_string(&path, init_path);
     init_unicode_string(&known_dll_us, known_dll_path);
@@ -267,6 +307,17 @@ void start(void) {
         if (status == STATUS_SUCCESS && mapped_base != NULL &&
             ((u8 *)mapped_base)[0] == 'M' && ((u8 *)mapped_base)[1] == 'Z') {
             write_console(stdout_handle, "native init: known dll section map succeeded\r\n");
+        }
+        status = NtQueryVirtualMemory(
+            (HANDLE)-1,
+            mapped_base,
+            MEMORY_BASIC_INFORMATION_CLASS,
+            &mbi,
+            sizeof(mbi),
+            &mbi_len
+        );
+        if (status == STATUS_SUCCESS && mbi.State == MEM_COMMIT && mbi.RegionSize != 0) {
+            write_console(stdout_handle, "native init: query virtual memory succeeded\r\n");
         }
         if (mapped_base != NULL) {
             NtUnmapViewOfSection((HANDLE)-1, mapped_base);
@@ -346,6 +397,11 @@ void start(void) {
     status = NtCreateEvent(&event, 0x1f0003u, NULL, EVENT_TYPE_NOTIFICATION, 0);
     if (status == STATUS_SUCCESS) {
         NtSetEvent(event, &previous_state);
+        status = NtResetEvent(event, &previous_state);
+        if (status == STATUS_SUCCESS && previous_state != 0) {
+            write_console(stdout_handle, "native init: reset event succeeded\r\n");
+        }
+        NtSetEvent(event, &previous_state);
         status = NtWaitForSingleObject(event, 0, NULL);
         if (status == STATUS_SUCCESS) {
             write_console(stdout_handle, "native init: event round-trip succeeded\r\n");
@@ -353,6 +409,27 @@ void start(void) {
             write_console(stdout_handle, "native init: event wait failed\r\n");
         }
         NtClose(event);
+    }
+
+    status = NtYieldExecution();
+    if (status == STATUS_SUCCESS) {
+        write_console(stdout_handle, "native init: yield execution succeeded\r\n");
+    }
+
+    status = NtDeviceIoControlFile(
+        stdout_handle,
+        0,
+        NULL,
+        NULL,
+        &iosb,
+        0,
+        NULL,
+        0,
+        NULL,
+        0
+    );
+    if (status == STATUS_INVALID_DEVICE_REQUEST) {
+        write_console(stdout_handle, "native init: ioctl unsupported as expected\r\n");
     }
 
     write_console(stdout_handle, "native init: exiting\r\n");

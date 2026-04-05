@@ -162,6 +162,26 @@ cargo.rust_library(
     crate = "binrw",
     crate_root = "binrw-0.15.1.crate/src/lib.rs",
     edition = "2021",
+    platform = {
+        "linux-arm64": dict(
+            features = ["std"],
+        ),
+        "linux-x86_64": dict(
+            features = ["std"],
+        ),
+        "macos-arm64": dict(
+            features = ["std"],
+        ),
+        "macos-x86_64": dict(
+            features = ["std"],
+        ),
+        "windows-gnu": dict(
+            features = ["std"],
+        ),
+        "windows-msvc": dict(
+            features = ["std"],
+        ),
+    },
     visibility = [],
     deps = [
         ":array-init-2",
@@ -226,6 +246,7 @@ cargo.rust_library(
     crate = "bitflags",
     crate_root = "bitflags-1.3.2.crate/src/lib.rs",
     edition = "2018",
+    features = ["default"],
     visibility = [],
 )
 
@@ -275,6 +296,24 @@ http_archive(
     sha256 = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71",
     strip_prefix = "block-buffer-0.10.4",
     urls = ["https://static.crates.io/crates/block-buffer/0.10.4/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "block-buffer-0.12",
+    srcs = [":block-buffer-0.12.0.crate"],
+    crate = "block_buffer",
+    crate_root = "block-buffer-0.12.0.crate/src/lib.rs",
+    edition = "2024",
+    visibility = [],
+    deps = [":hybrid-array-0.4"],
+)
+
+http_archive(
+    name = "block-buffer-0.12.0.crate",
+    sha256 = "cdd35008169921d80bc60d3d0ab416eecb028c4cd653352907921d95084790be",
+    strip_prefix = "block-buffer-0.12.0",
+    urls = ["https://static.crates.io/crates/block-buffer/0.12.0/download"],
     visibility = [],
 )
 
@@ -530,7 +569,9 @@ cargo.rust_library(
     edition = "2024",
     features = [
         "derive",
+        "help",
         "std",
+        "usage",
     ],
     visibility = [],
     deps = [
@@ -553,7 +594,11 @@ cargo.rust_library(
     crate = "clap_builder",
     crate_root = "clap_builder-4.6.0.crate/src/lib.rs",
     edition = "2024",
-    features = ["std"],
+    features = [
+        "help",
+        "std",
+        "usage",
+    ],
     visibility = [],
     deps = [
         ":anstyle-1",
@@ -649,6 +694,23 @@ http_archive(
     sha256 = "d64e8af5551369d19cf50138de61f1c42074ab970f74e99be916646777f8fc87",
     strip_prefix = "console-0.16.3",
     urls = ["https://static.crates.io/crates/console/0.16.3/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "const-oid-0.10",
+    srcs = [":const-oid-0.10.2.crate"],
+    crate = "const_oid",
+    crate_root = "const-oid-0.10.2.crate/src/lib.rs",
+    edition = "2024",
+    visibility = [],
+)
+
+http_archive(
+    name = "const-oid-0.10.2.crate",
+    sha256 = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c",
+    strip_prefix = "const-oid-0.10.2",
+    urls = ["https://static.crates.io/crates/const-oid/0.10.2/download"],
     visibility = [],
 )
 
@@ -759,6 +821,31 @@ http_archive(
     sha256 = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280",
     strip_prefix = "cpufeatures-0.2.17",
     urls = ["https://static.crates.io/crates/cpufeatures/0.2.17/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "cpufeatures-0.3",
+    srcs = [":cpufeatures-0.3.0.crate"],
+    crate = "cpufeatures",
+    crate_root = "cpufeatures-0.3.0.crate/src/lib.rs",
+    edition = "2024",
+    platform = {
+        "linux-arm64": dict(
+            deps = [":libc-0.2"],
+        ),
+        "macos-arm64": dict(
+            deps = [":libc-0.2"],
+        ),
+    },
+    visibility = [],
+)
+
+http_archive(
+    name = "cpufeatures-0.3.0.crate",
+    sha256 = "8b2a41393f66f16b0823bb79094d54ac5fbd34ab292ddafb9a0456ac9f87d201",
+    strip_prefix = "cpufeatures-0.3.0",
+    urls = ["https://static.crates.io/crates/cpufeatures/0.3.0/download"],
     visibility = [],
 )
 
@@ -970,6 +1057,36 @@ http_archive(
 )
 
 cargo.rust_library(
+    name = "digest-0.11",
+    srcs = [":digest-0.11.2.crate"],
+    crate = "digest",
+    crate_root = "digest-0.11.2.crate/src/lib.rs",
+    edition = "2024",
+    features = [
+        "alloc",
+        "block-api",
+        "default",
+        "oid",
+    ],
+    named_deps = {
+        "common": ":crypto-common-0.2",
+    },
+    visibility = [],
+    deps = [
+        ":block-buffer-0.12",
+        ":const-oid-0.10",
+    ],
+)
+
+http_archive(
+    name = "digest-0.11.2.crate",
+    sha256 = "4850db49bf08e663084f7fb5c87d202ef91a3907271aff24a94eb97ff039153c",
+    strip_prefix = "digest-0.11.2",
+    urls = ["https://static.crates.io/crates/digest/0.11.2/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
     name = "displaydoc-0.2",
     srcs = [":displaydoc-0.2.5.crate"],
     crate = "displaydoc",
@@ -998,10 +1115,44 @@ cargo.rust_library(
     crate = "either",
     crate_root = "either-1.15.0.crate/src/lib.rs",
     edition = "2021",
-    features = [
-        "default",
-        "std",
-    ],
+    platform = {
+        "linux-arm64": dict(
+            features = [
+                "default",
+                "std",
+            ],
+        ),
+        "linux-x86_64": dict(
+            features = [
+                "default",
+                "std",
+            ],
+        ),
+        "macos-arm64": dict(
+            features = [
+                "default",
+                "std",
+            ],
+        ),
+        "macos-x86_64": dict(
+            features = [
+                "default",
+                "std",
+            ],
+        ),
+        "windows-gnu": dict(
+            features = [
+                "default",
+                "std",
+            ],
+        ),
+        "windows-msvc": dict(
+            features = [
+                "default",
+                "std",
+            ],
+        ),
+    },
     visibility = [],
 )
 
@@ -3153,6 +3304,71 @@ http_archive(
 )
 
 alias(
+    name = "rootcause",
+    actual = ":rootcause-0.12",
+    visibility = ["PUBLIC"],
+)
+
+cargo.rust_library(
+    name = "rootcause-0.12",
+    srcs = [":rootcause-0.12.1.crate"],
+    crate = "rootcause",
+    crate_root = "rootcause-0.12.1.crate/src/lib.rs",
+    edition = "2024",
+    visibility = [],
+    deps = [
+        ":hashbrown-0.16",
+        ":indexmap-2",
+        ":rootcause-internals-0.12",
+        ":rustc-hash-2",
+        ":triomphe-0.1",
+    ],
+)
+
+http_archive(
+    name = "rootcause-0.12.1.crate",
+    sha256 = "4fc4bd36159c7ce180fe2de1e5371ef107a2885f0048430f631e78202e2255d4",
+    strip_prefix = "rootcause-0.12.1",
+    urls = ["https://static.crates.io/crates/rootcause/0.12.1/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "rootcause-internals-0.12",
+    srcs = [":rootcause-internals-0.12.1.crate"],
+    crate = "rootcause_internals",
+    crate_root = "rootcause-internals-0.12.1.crate/src/lib.rs",
+    edition = "2024",
+    visibility = [],
+    deps = [":triomphe-0.1"],
+)
+
+http_archive(
+    name = "rootcause-internals-0.12.1.crate",
+    sha256 = "4d0df4f84d119d09b5c9c9e8db0fe9bfb5b47b04d0bb95b0763cf81bd9baa559",
+    strip_prefix = "rootcause-internals-0.12.1",
+    urls = ["https://static.crates.io/crates/rootcause-internals/0.12.1/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "rustc-hash-2",
+    srcs = [":rustc-hash-2.1.2.crate"],
+    crate = "rustc_hash",
+    crate_root = "rustc-hash-2.1.2.crate/src/lib.rs",
+    edition = "2021",
+    visibility = [],
+)
+
+http_archive(
+    name = "rustc-hash-2.1.2.crate",
+    sha256 = "94300abf3f1ae2e2b8ffb7b58043de3d399c73fa6f4b73826402a5c457614dbe",
+    strip_prefix = "rustc-hash-2.1.2",
+    urls = ["https://static.crates.io/crates/rustc-hash/2.1.2/download"],
+    visibility = [],
+)
+
+alias(
     name = "rustix",
     actual = ":rustix-1",
     visibility = ["PUBLIC"],
@@ -3183,6 +3399,12 @@ cargo.rust_library(
             deps = [":libc-0.2"],
         ),
         "macos-x86_64": dict(
+            named_deps = {
+                "libc_errno": ":errno-0.3",
+            },
+            deps = [":libc-0.2"],
+        ),
+        "uefi": dict(
             named_deps = {
                 "libc_errno": ":errno-0.3",
             },
@@ -3652,6 +3874,39 @@ http_archive(
     sha256 = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba",
     strip_prefix = "sha1-0.10.6",
     urls = ["https://static.crates.io/crates/sha1/0.10.6/download"],
+    visibility = [],
+)
+
+alias(
+    name = "sha1",
+    actual = ":sha1-0.11",
+    visibility = ["PUBLIC"],
+)
+
+cargo.rust_library(
+    name = "sha1-0.11",
+    srcs = [":sha1-0.11.0.crate"],
+    crate = "sha1",
+    crate_root = "sha1-0.11.0.crate/src/lib.rs",
+    edition = "2024",
+    features = [
+        "alloc",
+        "default",
+        "oid",
+    ],
+    visibility = [],
+    deps = [
+        ":cfg-if-1",
+        ":cpufeatures-0.3",
+        ":digest-0.11",
+    ],
+)
+
+http_archive(
+    name = "sha1-0.11.0.crate",
+    sha256 = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214",
+    strip_prefix = "sha1-0.11.0",
+    urls = ["https://static.crates.io/crates/sha1/0.11.0/download"],
     visibility = [],
 )
 
@@ -4472,6 +4727,23 @@ http_archive(
 )
 
 cargo.rust_library(
+    name = "triomphe-0.1",
+    srcs = [":triomphe-0.1.15.crate"],
+    crate = "triomphe",
+    crate_root = "triomphe-0.1.15.crate/src/lib.rs",
+    edition = "2021",
+    visibility = [],
+)
+
+http_archive(
+    name = "triomphe-0.1.15.crate",
+    sha256 = "dd69c5aa8f924c7519d6372789a74eac5b94fb0f8fcf0d4a97eb0bfc3e785f39",
+    strip_prefix = "triomphe-0.1.15",
+    urls = ["https://static.crates.io/crates/triomphe/0.1.15/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
     name = "try-lock-0.2",
     srcs = [":try-lock-0.2.5.crate"],
     crate = "try_lock",
@@ -5202,9 +5474,9 @@ alias(
 
 cargo.rust_library(
     name = "zip-8",
-    srcs = [":zip-8.4.0.crate"],
+    srcs = [":zip-8.5.0.crate"],
     crate = "zip",
-    crate_root = "zip-8.4.0.crate/src/lib.rs",
+    crate_root = "zip-8.5.0.crate/src/lib.rs",
     edition = "2024",
     features = [
         "_bzip2_any",
@@ -5249,10 +5521,10 @@ cargo.rust_library(
 )
 
 http_archive(
-    name = "zip-8.4.0.crate",
-    sha256 = "7756d0206d058333667493c4014f545f4b9603c4330ccd6d9b3f86dcab59f7d9",
-    strip_prefix = "zip-8.4.0",
-    urls = ["https://static.crates.io/crates/zip/8.4.0/download"],
+    name = "zip-8.5.0.crate",
+    sha256 = "2726508a48f38dceb22b35ecbbd2430efe34ff05c62bd3285f965d7911b33464",
+    strip_prefix = "zip-8.5.0",
+    urls = ["https://static.crates.io/crates/zip/8.5.0/download"],
     visibility = [],
 )
 

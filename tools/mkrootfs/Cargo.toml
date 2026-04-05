@@ -1,9 +1,0 @@
-[package]
-name = "mkrootfs"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-crabfs = { path = "../../lib/crabfs", features = ["std"] }
-
-[workspace]

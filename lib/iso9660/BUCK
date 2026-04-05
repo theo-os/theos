@@ -1,0 +1,12 @@
+rust_library(
+    name = "iso9660",
+    srcs = glob(["**/*.rs"]),
+    crate_root = "lib.rs",
+    crate = "iso9660",
+    edition = "2024",
+    visibility = ["PUBLIC"],
+    deps = [
+        "third-party//:byteorder",
+        "third-party//:thiserror",
+    ],
+)

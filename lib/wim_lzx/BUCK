@@ -1,0 +1,11 @@
+rust_library(
+    name = "wim_lzx",
+    srcs = glob(["**/*.rs"]),
+    crate_root = "lib.rs",
+    crate = "wim_lzx",
+    edition = "2024",
+    visibility = ["PUBLIC"],
+    deps = [
+        "third-party//:thiserror",
+    ],
+)

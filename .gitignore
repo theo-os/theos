@@ -6,8 +6,8 @@ target/
 *.bin
 /efi_root
 /iso_root
+.empty-rootfs
 *.tar.*
-/stage3-root
 *.exe
 *.obj
 *.exe

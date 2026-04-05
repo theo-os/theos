@@ -1,1 +1,29 @@
 third_party_dir = "third-party"
+
+[platform.linux-x86_64]
+target = "x86_64-unknown-linux-gnu"
+execution-platform = true
+
+[platform.linux-arm64]
+target = "aarch64-unknown-linux-gnu"
+execution-platform = true
+
+[platform.macos-x86_64]
+target = "x86_64-apple-darwin"
+execution-platform = true
+
+[platform.macos-arm64]
+target = "aarch64-apple-darwin"
+execution-platform = true
+
+[platform.windows-msvc]
+target = "x86_64-pc-windows-msvc"
+execution-platform = true
+
+[platform.windows-gnu]
+target = "x86_64-pc-windows-gnu"
+execution-platform = true
+
+[platform.uefi]
+target = "x86_64-unknown-uefi"
+execution-platform = false

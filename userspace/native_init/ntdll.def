@@ -22,4 +22,10 @@ EXPORTS
     NtDelayExecution
     NtQuerySystemTime
     NtOpenSection
+    NtDeviceIoControlFile
+    NtQueryVirtualMemory
+    NtYieldExecution
+    NtClearEvent
+    NtResetEvent
+    NtCreateThreadEx
     NtdllRelocAnchorData DATA

@@ -32,9 +32,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let efi_boot_file = "BOOTX64.EFI";
     let qemu_bin = "qemu-system-x86_64";
 
-    let gentoo_stage3_tarball = env::var("GENTOO_STAGE3_TARBALL").unwrap_or_default();
-    let gentoo_stage3_staging =
-        env::var("GENTOO_STAGE3_STAGING").unwrap_or_else(|_| "stage3-root".to_string());
     let kernel_init = env::var("KERNEL_INIT").unwrap_or_default();
     let kernel_root = env::var("KERNEL_ROOT").unwrap_or_else(|_| "/dev/vda".to_string());
     let kernel_rootfstype = env::var("KERNEL_ROOTFSTYPE").unwrap_or_else(|_| "crabfs".to_string());
@@ -48,48 +45,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         drop(path);
     }
 
-    if !gentoo_stage3_tarball.is_empty() {
-        run_import_rootfs(
-            &root,
-            Path::new(&gentoo_stage3_tarball),
-            Path::new(&gentoo_stage3_staging),
-        )?;
-        install_native_init_to_dir(
-            &native_init_exe,
-            &child_exe,
-            &ntdll_dll,
-            Path::new(&gentoo_stage3_staging),
-        )?;
-        build_rootfs_from_dir(
-            &mkrootfs_bin,
-            Path::new(&gentoo_stage3_staging),
-            &rootfs_img,
-            rootfs_size_mib.as_str(),
-        )?;
-    } else if Path::new(&gentoo_stage3_staging).is_dir() {
-        install_native_init_to_dir(
-            &native_init_exe,
-            &child_exe,
-            &ntdll_dll,
-            Path::new(&gentoo_stage3_staging),
-        )?;
-        build_rootfs_from_dir(
-            &mkrootfs_bin,
-            Path::new(&gentoo_stage3_staging),
-            &rootfs_img,
-            rootfs_size_mib.as_str(),
-        )?;
-    } else {
-        remove_if_exists(&empty_rootfs_dir)?;
-        fs::create_dir_all(empty_rootfs_dir.join("Windows/System32"))?;
-        install_native_init_to_dir(&native_init_exe, &child_exe, &ntdll_dll, &empty_rootfs_dir)?;
-        build_rootfs_from_dir(
-            &mkrootfs_bin,
-            &empty_rootfs_dir,
-            &rootfs_img,
-            rootfs_size_mib.as_str(),
-        )?;
-    }
+    remove_if_exists(&empty_rootfs_dir)?;
+    fs::create_dir_all(empty_rootfs_dir.join("Windows/System32"))?;
+    install_native_init_to_dir(&native_init_exe, &child_exe, &ntdll_dll, &empty_rootfs_dir)?;
+    build_rootfs_from_dir(
+        &mkrootfs_bin,
+        &empty_rootfs_dir,
+        &rootfs_img,
+        rootfs_size_mib.as_str(),
+    )?;
 
     remove_if_exists(&efi_root)?;
     fs::create_dir_all(efi_root.join("EFI/BOOT"))?;

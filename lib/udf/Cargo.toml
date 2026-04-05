@@ -1,13 +1,10 @@
 [package]
-name = "loader"
+name = "udf"
 version.workspace = true
 edition.workspace = true
 
-[lib]
-path = "loader.rs"
-
 [dependencies]
-goblin = { workspace = true }
+byteorder = { workspace = true }
 thiserror = { workspace = true }
 
 [lints]
