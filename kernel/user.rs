@@ -4,7 +4,8 @@ use crate::nt::{
     self, AccessMask, ClientId, FilePositionInformation, FileStandardInformation, Handle,
     IoStatusBlock, LdrDataTableEntry, ListEntry, NtStatus, ObjectAttributes, Peb, PebLdrData,
     ProcessBasicInformation,
-    RtlUserProcessParameters, Teb, UnicodeString, STATUS_ACCESS_DENIED, STATUS_BUFFER_TOO_SMALL,
+    RtlCriticalSection, RtlUserProcessParameters, Teb, UnicodeString, STATUS_ACCESS_DENIED,
+    STATUS_BUFFER_TOO_SMALL,
     STATUS_CONFLICTING_ADDRESSES, STATUS_END_OF_FILE, STATUS_INFO_LENGTH_MISMATCH,
     STATUS_INVALID_HANDLE, STATUS_INVALID_IMAGE_FORMAT, STATUS_INVALID_PARAMETER,
     STATUS_NOT_IMPLEMENTED, STATUS_NOT_SUPPORTED, STATUS_NO_MEMORY, STATUS_OBJECT_NAME_NOT_FOUND,
@@ -30,6 +31,7 @@ const NT_EPOCH_OFFSET_100NS: i64 = 116_444_736_000_000_000;
 const SCHED_TICK_100NS: i64 = 100_000;
 const USER_STACK_TOP: u64 = 0x0000_7fff_ff00_0000;
 const USER_STACK_PAGES: u64 = 64;
+const USER_SHARED_DATA_BASE: u64 = 0x0000_0000_7ffe_0000;
 const USER_ENV_BASE: u64 = 0x0000_7fff_f000_0000;
 const USER_ENV_PAGES: u64 = 16;
 const USER_BOOTSTRAP_BASE: u64 = USER_ENV_BASE + USER_ENV_PAGES * PAGE_SIZE;
@@ -303,6 +305,148 @@ fn pml4_index(addr: u64) -> usize {
 
 fn pdpt_index(addr: u64) -> usize {
     ((addr >> 30) & 0x1ff) as usize
+}
+
+fn pd_index(addr: u64) -> usize {
+    ((addr >> 21) & 0x1ff) as usize
+}
+
+fn pt_index(addr: u64) -> usize {
+    ((addr >> 12) & 0x1ff) as usize
+}
+
+fn copy_page_table_frame(
+    offset: VirtAddr,
+    src_frame: PhysFrame<Size4KiB>,
+) -> Result<PhysFrame<Size4KiB>, NtStatus> {
+    let dst_frame = allocator::allocate_frame().map_err(|_| STATUS_NO_MEMORY)?;
+    allocator::zero_frame(dst_frame).map_err(|_| STATUS_NO_MEMORY)?;
+    let src_ptr = (offset.as_u64() + src_frame.start_address().as_u64()) as *const u8;
+    let dst_ptr = (offset.as_u64() + dst_frame.start_address().as_u64()) as *mut u8;
+    unsafe {
+        core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, PAGE_SIZE as usize);
+    }
+    Ok(dst_frame)
+}
+
+fn mark_user_shared_data_page(
+    offset: VirtAddr,
+    new_pdpt: &mut PageTable,
+) -> Result<(), NtStatus> {
+    let shared = USER_SHARED_DATA_BASE;
+    let pdpt_idx = pdpt_index(shared);
+    let mut pdpt_entry = new_pdpt[pdpt_idx].clone();
+    if pdpt_entry.is_unused() {
+        return Ok(());
+    }
+
+    if pdpt_entry.flags().contains(PageTableFlags::HUGE_PAGE) {
+        let pd_frame = allocator::allocate_frame().map_err(|_| STATUS_NO_MEMORY)?;
+        allocator::zero_frame(pd_frame).map_err(|_| STATUS_NO_MEMORY)?;
+        let pd_ptr = (offset.as_u64() + pd_frame.start_address().as_u64()) as *mut PageTable;
+        unsafe {
+            let pd = &mut *pd_ptr;
+            let base = pdpt_entry.addr().as_u64();
+            let mut flags = pdpt_entry.flags();
+            flags.remove(PageTableFlags::HUGE_PAGE);
+            for i in 0..512u64 {
+                let phys = base + i * (2 * 1024 * 1024);
+                pd[i as usize].set_addr(x86_64::PhysAddr::new(phys), flags);
+            }
+        }
+        let mut flags = pdpt_entry.flags();
+        flags.remove(PageTableFlags::HUGE_PAGE);
+        flags |= PageTableFlags::USER_ACCESSIBLE;
+        new_pdpt[pdpt_idx].set_addr(pd_frame.start_address(), flags);
+        pdpt_entry = new_pdpt[pdpt_idx].clone();
+    } else {
+        let cloned_pd = copy_page_table_frame(
+            offset,
+            PhysFrame::containing_address(pdpt_entry.addr()),
+        )?;
+        let mut flags = pdpt_entry.flags();
+        flags |= PageTableFlags::USER_ACCESSIBLE;
+        new_pdpt[pdpt_idx].set_addr(cloned_pd.start_address(), flags);
+        pdpt_entry = new_pdpt[pdpt_idx].clone();
+    }
+
+    let pd_frame: PhysFrame<Size4KiB> = PhysFrame::containing_address(pdpt_entry.addr());
+    let pd_ptr = (offset.as_u64() + pd_frame.start_address().as_u64()) as *mut PageTable;
+    let pd = unsafe { &mut *pd_ptr };
+    let pdi = pd_index(shared);
+    let mut pde = pd[pdi].clone();
+    if pde.is_unused() {
+        return Ok(());
+    }
+
+    if pde.flags().contains(PageTableFlags::HUGE_PAGE) {
+        let pt_frame = allocator::allocate_frame().map_err(|_| STATUS_NO_MEMORY)?;
+        allocator::zero_frame(pt_frame).map_err(|_| STATUS_NO_MEMORY)?;
+        let pt_ptr = (offset.as_u64() + pt_frame.start_address().as_u64()) as *mut PageTable;
+        unsafe {
+            let pt = &mut *pt_ptr;
+            let base = pde.addr().as_u64();
+            let mut pte_flags = pde.flags();
+            pte_flags.remove(PageTableFlags::HUGE_PAGE);
+            for i in 0..512u64 {
+                let phys = base + i * PAGE_SIZE;
+                pt[i as usize].set_addr(x86_64::PhysAddr::new(phys), pte_flags);
+            }
+        }
+        let mut pde_flags = pde.flags();
+        pde_flags.remove(PageTableFlags::HUGE_PAGE);
+        pde_flags |= PageTableFlags::USER_ACCESSIBLE;
+        pd[pdi].set_addr(pt_frame.start_address(), pde_flags);
+        pde = pd[pdi].clone();
+    } else {
+        let cloned_pt = copy_page_table_frame(offset, PhysFrame::containing_address(pde.addr()))?;
+        let mut pde_flags = pde.flags();
+        pde_flags |= PageTableFlags::USER_ACCESSIBLE;
+        pd[pdi].set_addr(cloned_pt.start_address(), pde_flags);
+        pde = pd[pdi].clone();
+    }
+
+    let pt_frame: PhysFrame<Size4KiB> = PhysFrame::containing_address(pde.addr());
+    let pt_ptr = (offset.as_u64() + pt_frame.start_address().as_u64()) as *mut PageTable;
+    let pt = unsafe { &mut *pt_ptr };
+    let pti = pt_index(shared);
+    let pte = pt[pti].clone();
+    if pte.is_unused() {
+        return Ok(());
+    }
+    let mut pte_flags = pte.flags();
+    pte_flags |= PageTableFlags::USER_ACCESSIBLE;
+    pt[pti].set_addr(pte.addr(), pte_flags);
+    Ok(())
+}
+
+pub fn enable_user_shared_data_page() -> bool {
+    let offset = match allocator::physical_memory_offset() {
+        Ok(offset) => offset,
+        Err(_) => return false,
+    };
+    let (root_frame, _) = Cr3::read();
+    let pml4_ptr = (offset.as_u64() + root_frame.start_address().as_u64()) as *mut PageTable;
+    let pml4 = unsafe { &mut *pml4_ptr };
+    let slot = pml4_index(USER_SHARED_DATA_BASE);
+    let entry = pml4[slot].clone();
+    if entry.is_unused() {
+        return false;
+    }
+
+    let mut pml4_flags = entry.flags();
+    pml4_flags |= PageTableFlags::USER_ACCESSIBLE;
+    pml4[slot].set_addr(entry.addr(), pml4_flags);
+
+    let pdpt_frame: PhysFrame<Size4KiB> = PhysFrame::containing_address(entry.addr());
+    let pdpt_ptr = (offset.as_u64() + pdpt_frame.start_address().as_u64()) as *mut PageTable;
+    let pdpt = unsafe { &mut *pdpt_ptr };
+    if mark_user_shared_data_page(offset, pdpt).is_ok() {
+        x86_64::instructions::tlb::flush(VirtAddr::new(USER_SHARED_DATA_BASE));
+        true
+    } else {
+        false
+    }
 }
 
 fn clone_low_identity_pml4_slot(
@@ -1288,6 +1432,74 @@ pub fn query_system_time(system_time: *mut i64) -> NtStatus {
     STATUS_SUCCESS
 }
 
+pub fn query_system_information(
+    information_class: u32,
+    system_information: *mut u8,
+    system_information_length: u32,
+    return_length: *mut u32,
+) -> NtStatus {
+    #[repr(C)]
+    #[derive(Clone, Copy, Default)]
+    struct SystemBasicInformation {
+        reserved: u32,
+        timer_resolution: u32,
+        page_size: u32,
+        number_of_physical_pages: u32,
+        lowest_physical_page_number: u32,
+        highest_physical_page_number: u32,
+        allocation_granularity: u32,
+        minimum_user_mode_address: usize,
+        maximum_user_mode_address: usize,
+        active_processors_affinity_mask: usize,
+        number_of_processors: u8,
+        pad: [u8; 3],
+    }
+
+    match information_class {
+        0 => {
+            let out_len = core::mem::size_of::<SystemBasicInformation>() as u32;
+            if !return_length.is_null() {
+                unsafe { *return_length = out_len };
+            }
+            if system_information.is_null() || system_information_length < out_len {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+            let info = SystemBasicInformation {
+                reserved: 0,
+                timer_resolution: 10_000,
+                page_size: PAGE_SIZE as u32,
+                number_of_physical_pages: 0x40_000,
+                lowest_physical_page_number: 1,
+                highest_physical_page_number: 0x3f_fff,
+                allocation_granularity: 0x1_0000,
+                minimum_user_mode_address: 0x1_0000,
+                maximum_user_mode_address: 0x0000_7fff_ffff_0000,
+                active_processors_affinity_mask: 1,
+                number_of_processors: 1,
+                pad: [0; 3],
+            };
+            unsafe {
+                core::ptr::write(system_information as *mut SystemBasicInformation, info);
+            }
+            STATUS_SUCCESS
+        }
+        2 => {
+            let out_len = 0x178u32;
+            if !return_length.is_null() {
+                unsafe { *return_length = out_len };
+            }
+            if system_information.is_null() || system_information_length < out_len {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+            unsafe {
+                core::ptr::write_bytes(system_information, 0, out_len as usize);
+            }
+            STATUS_SUCCESS
+        }
+        _ => STATUS_NOT_IMPLEMENTED,
+    }
+}
+
 pub fn yield_execution() -> NtStatus {
     process::yield_current();
     unsafe {
@@ -1964,6 +2176,10 @@ fn load_init_context(
             return Err(status);
         }
     };
+    if let Err(status) = seed_ntdll_heap_globals() {
+        println!("NT KERNEL: seed_ntdll_heap_globals failed: {:#x}", status);
+        return Err(status);
+    }
 
     let stack_bottom = USER_STACK_TOP - USER_STACK_PAGES * PAGE_SIZE;
     if let Err(status) = map_region(
@@ -2018,8 +2234,38 @@ fn load_init_context(
     })
 }
 
+fn seed_ntdll_heap_globals() -> Result<(), NtStatus> {
+    let ntdll = load_module("ntdll.dll")?;
+    let image_base = ntdll.image_base;
+    // Win11 ntdll heap globals used by RtlCreateHeap:
+    //   0x1d3fc0: LIST_ENTRY head
+    //   0x1d3fc8: pointer to LIST_ENTRY head
+    //   0x1d3fe0: RTL_CRITICAL_SECTION for heap list lock
+    let heap_list_head = image_base + 0x1d3fc0;
+    let heap_list_ptr = image_base + 0x1d3fc8;
+    let heap_list_lock = image_base + 0x1d3fe0;
+    unsafe {
+        *(heap_list_head as *mut u64) = heap_list_head;
+        *((heap_list_head + 8) as *mut u64) = heap_list_head;
+        *(heap_list_ptr as *mut u64) = heap_list_head;
+        let lock = heap_list_lock as *mut RtlCriticalSection;
+        (*lock).lock_count = -1;
+    }
+    Ok(())
+}
+
 fn install_startup_bootstrap(peb_addr: u64, entry_rip: u64) -> Result<u64, NtStatus> {
     let ntdll = load_module("ntdll.dll")?;
+    let rtl_get_process_heaps = match resolve_export_name(&ntdll, "RtlGetProcessHeaps") {
+        Ok(addr) => addr,
+        Err(status) => {
+            println!(
+                "NT KERNEL: resolve_export_name(RtlGetProcessHeaps) failed status={:#x}",
+                status
+            );
+            return Err(status);
+        }
+    };
     let rtl_create_heap = match resolve_export_name(&ntdll, "RtlCreateHeap") {
         Ok(addr) => addr,
         Err(status) => {
@@ -2032,18 +2278,31 @@ fn install_startup_bootstrap(peb_addr: u64, entry_rip: u64) -> Result<u64, NtSta
     };
     map_region(USER_BOOTSTRAP_BASE, PAGE_SIZE, nt::PAGE_EXECUTE_READWRITE)?;
 
-    let mut code = Vec::with_capacity(80);
-    code.extend_from_slice(&[0x48, 0x31, 0xC9]); // xor rcx, rcx
+    let mut code = Vec::with_capacity(160);
+    code.extend_from_slice(&[0x48, 0x83, 0xEC, 0x40]); // sub rsp, 0x40
+    code.extend_from_slice(&[0x48, 0x31, 0xC0]); // xor rax, rax
+    code.extend_from_slice(&[0x48, 0x89, 0x44, 0x24, 0x30]); // mov [rsp+0x30], rax
+    code.extend_from_slice(&[0x48, 0x8D, 0x54, 0x24, 0x30]); // lea rdx, [rsp+0x30]
+    code.extend_from_slice(&[0xB9, 0x01, 0x00, 0x00, 0x00]); // mov ecx, 1
+    code.extend_from_slice(&[0x48, 0xB8]); // mov rax, imm64
+    code.extend_from_slice(&rtl_get_process_heaps.to_le_bytes());
+    code.extend_from_slice(&[0xFF, 0xD0]); // call rax
+    code.extend_from_slice(&[0x48, 0x8B, 0x44, 0x24, 0x30]); // mov rax, [rsp+0x30]
+    code.extend_from_slice(&[0x48, 0x85, 0xC0]); // test rax, rax
+    code.extend_from_slice(&[0x75, 0x25]); // jne +0x25 (skip RtlCreateHeap fallback)
+
+    code.extend_from_slice(&[0xB9, 0x02, 0x00, 0x00, 0x00]); // mov ecx, 2 (HEAP_GROWABLE)
     code.extend_from_slice(&[0x48, 0x31, 0xD2]); // xor rdx, rdx
-    code.extend_from_slice(&[0x4D, 0x31, 0xC0]); // xor r8, r8
-    code.extend_from_slice(&[0x4D, 0x31, 0xC9]); // xor r9, r9
-    code.extend_from_slice(&[0x48, 0x83, 0xEC, 0x30]); // sub rsp, 0x30
+    code.extend_from_slice(&[0x49, 0xB8]); // mov r8, 0x100000
+    code.extend_from_slice(&(0x10_0000u64).to_le_bytes());
+    code.extend_from_slice(&[0x49, 0xB9]); // mov r9, 0x2000
+    code.extend_from_slice(&(0x2000u64).to_le_bytes());
     code.extend_from_slice(&[0x48, 0xC7, 0x44, 0x24, 0x20, 0x00, 0x00, 0x00, 0x00]); // mov qword [rsp+0x20], 0
     code.extend_from_slice(&[0x48, 0xC7, 0x44, 0x24, 0x28, 0x00, 0x00, 0x00, 0x00]); // mov qword [rsp+0x28], 0
     code.extend_from_slice(&[0x48, 0xB8]); // mov rax, imm64
     code.extend_from_slice(&rtl_create_heap.to_le_bytes());
     code.extend_from_slice(&[0xFF, 0xD0]); // call rax
-    code.extend_from_slice(&[0x48, 0x83, 0xC4, 0x30]); // add rsp, 0x30
+    code.extend_from_slice(&[0x48, 0x83, 0xC4, 0x40]); // add rsp, 0x40
     code.extend_from_slice(&[0x48, 0xB9]); // mov rcx, imm64
     code.extend_from_slice(&peb_addr.to_le_bytes());
     code.extend_from_slice(&[0x48, 0x89, 0x41, 0x30]); // mov [rcx+0x30], rax
@@ -2641,6 +2900,10 @@ fn build_process_environment(nt_path: &str, stack_top: u64) -> Result<(u64, u64,
         + (modules.len() as u64 * core::mem::size_of::<LdrDataTableEntry>() as u64);
     let peb_addr = align_up(cursor, 16);
     cursor = peb_addr + core::mem::size_of::<Peb>() as u64;
+    let process_heaps_addr = align_up(cursor, 8);
+    cursor = process_heaps_addr + core::mem::size_of::<usize>() as u64;
+    let fast_peb_lock_addr = align_up(cursor, 16);
+    cursor = fast_peb_lock_addr + core::mem::size_of::<RtlCriticalSection>() as u64;
     let teb_addr = align_up(cursor, 16);
     cursor = teb_addr + core::mem::size_of::<Teb>() as u64;
 
@@ -2789,10 +3052,27 @@ fn build_process_environment(nt_path: &str, stack_top: u64) -> Result<(u64, u64,
         image_base_address: current_slot().lock().image_base as usize,
         ldr: 0,
         process_parameters: params_addr as *mut RtlUserProcessParameters,
+        fast_peb_lock: fast_peb_lock_addr as usize,
+        heap_segment_reserve: 0x100000,
+        heap_segment_commit: 0x2000,
+        heap_decommit_total_free_threshold: 0x10000,
+        heap_decommit_free_block_threshold: 0x1000,
+        number_of_heaps: 1,
+        maximum_number_of_heaps: 1,
+        process_heaps: process_heaps_addr as usize,
         ..Peb::default()
     };
     unsafe { *(peb_addr as *mut Peb) = peb };
+    unsafe { *(process_heaps_addr as *mut usize) = 0 };
+    let fast_peb_lock = RtlCriticalSection {
+        lock_count: -1,
+        ..RtlCriticalSection::default()
+    };
+    unsafe { *(fast_peb_lock_addr as *mut RtlCriticalSection) = fast_peb_lock };
     let teb = Teb {
+        nt_tib_stack_base: stack_top as usize,
+        nt_tib_stack_limit: (stack_top - USER_STACK_PAGES * PAGE_SIZE) as usize,
+        nt_tib_self: teb_addr as *mut Teb,
         process_environment_block: peb_addr as *mut Peb,
         client_id: ClientId {
             unique_process: current_slot().lock().pid as usize,

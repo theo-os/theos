@@ -167,7 +167,24 @@ extern "sysv64" fn syscall_dispatch(frame: *mut SyscallFrame) -> usize {
         return nt::STATUS_INVALID_PARAMETER as usize;
     }
     let frame = unsafe { &*frame };
-    match frame.nr {
+    let result = match frame.nr {
+        // Windows native syscall number for NtQuerySystemInformation on recent x64 builds.
+        54 => user::query_system_information(
+            frame.r10 as u32,
+            frame.rdx as *mut u8,
+            frame.r8 as u32,
+            frame.r9 as *mut u32,
+        ) as usize,
+        // Windows native syscall number for NtAllocateVirtualMemory on recent x64 builds.
+        // Args: (ProcessHandle, BaseAddress*, ZeroBits, RegionSize*, AllocationType, Protect)
+        24 if frame.rdx != 0 && frame.r9 != 0 => user::allocate_virtual_memory(
+            frame.r10,
+            frame.rdx as *mut usize,
+            frame.r9 as *mut usize,
+            stack_arg(frame, 1) as u32,
+        ) as usize,
+        // Windows native syscall number for NtTerminateProcess on recent x64 builds.
+        44 => user::terminate_process(frame.r10, frame.rdx as i32) as usize,
         nt::SYSCALL_NT_CLOSE => user::close_handle(frame.a0) as usize,
         nt::SYSCALL_NT_QUERY_INFORMATION_PROCESS => user::query_information_process(
             frame.a0,
@@ -307,5 +324,6 @@ extern "sysv64" fn syscall_dispatch(frame: *mut SyscallFrame) -> usize {
             stack_arg(frame, 4) as *const (),
         ) as usize,
         _ => nt::STATUS_NOT_IMPLEMENTED as usize,
-    }
+    };
+    result
 }

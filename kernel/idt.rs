@@ -101,6 +101,12 @@ extern "x86-interrupt" fn page_fault_handler(
 ) {
     use x86_64::registers::control::Cr2;
     let fault_addr = Cr2::read().expect("failed to read CR2");
+    if is_user_fault(&stack_frame)
+        && (0x7ffe_0000..0x7ffe_1000).contains(&fault_addr.as_u64())
+        && crate::user::enable_user_shared_data_page()
+    {
+        return;
+    }
     if let Ok(true) = crate::reclaim::handle_page_fault(fault_addr) {
         return;
     }

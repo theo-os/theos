@@ -269,6 +269,35 @@ pub struct Peb {
     pub process_parameters: *mut RtlUserProcessParameters,
     pub sub_system_data: usize,
     pub process_heap: usize,
+    pub fast_peb_lock: usize,
+    pub atl_thunk_slist_ptr: usize,
+    pub ifeo_key: usize,
+    pub cross_process_flags: u32,
+    pub padding0: u32,
+    pub kernel_callback_table: usize,
+    pub system_reserved: u32,
+    pub atl_thunk_slist_ptr32: u32,
+    pub api_set_map: usize,
+    pub tls_expansion_counter: u32,
+    pub padding1: u32,
+    pub tls_bitmap: usize,
+    pub tls_bitmap_bits: [u32; 2],
+    pub read_only_shared_memory_base: usize,
+    pub shared_data: usize,
+    pub read_only_static_server_data: usize,
+    pub ansi_code_page_data: usize,
+    pub oem_code_page_data: usize,
+    pub unicode_case_table_data: usize,
+    pub number_of_processors: u32,
+    pub nt_global_flag: u32,
+    pub critical_section_timeout: i64,
+    pub heap_segment_reserve: usize,
+    pub heap_segment_commit: usize,
+    pub heap_decommit_total_free_threshold: usize,
+    pub heap_decommit_free_block_threshold: usize,
+    pub number_of_heaps: u32,
+    pub maximum_number_of_heaps: u32,
+    pub process_heaps: usize,
 }
 
 #[repr(C)]
@@ -300,16 +329,39 @@ pub struct LdrDataTableEntry {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct Teb {
-    pub reserved1: [usize; 12],
-    pub process_environment_block: *mut Peb,
+    pub nt_tib_exception_list: usize,
+    pub nt_tib_stack_base: usize,
+    pub nt_tib_stack_limit: usize,
+    pub nt_tib_sub_system_tib: usize,
+    pub nt_tib_fiber_data: usize,
+    pub nt_tib_arbitrary_user_pointer: usize,
+    pub nt_tib_self: *mut Teb,
+    pub environment_pointer: usize,
     pub client_id: ClientId,
-    pub reserved2: [usize; 20],
+    pub active_rpc_handle: usize,
+    pub thread_local_storage_pointer: usize,
+    pub process_environment_block: *mut Peb,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct RtlCriticalSection {
+    pub debug_info: usize,
+    pub lock_count: i32,
+    pub recursion_count: i32,
+    pub owning_thread: usize,
+    pub lock_semaphore: usize,
+    pub spin_count: usize,
 }
 
 const _: () = {
     assert!(core::mem::offset_of!(RtlUserProcessParameters, image_path_name) == 0x60);
     assert!(core::mem::offset_of!(RtlUserProcessParameters, command_line) == 0x70);
     assert!(core::mem::offset_of!(Peb, process_heap) == 0x30);
+    assert!(core::mem::offset_of!(Peb, nt_global_flag) == 0xbc);
+    assert!(core::mem::offset_of!(Peb, heap_segment_reserve) == 0xc8);
+    assert!(core::mem::offset_of!(Peb, heap_decommit_free_block_threshold) == 0xe0);
+    assert!(core::mem::offset_of!(Peb, process_heaps) == 0xf0);
     assert!(core::mem::offset_of!(Teb, process_environment_block) == 0x60);
 };
 
