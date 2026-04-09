@@ -11,21 +11,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let root = env::current_dir()?;
-    let kernel_bin = env_path("BUCK_KERNEL_BIN").unwrap_or(buck_output(&root, "//kernel:kernel")?);
-    let mkrootfs_bin =
-        env_path("BUCK_MKROOTFS_BIN").unwrap_or(buck_output(&root, "//tools/mkrootfs:mkrootfs")?);
-    let native_init_exe = env_path("BUCK_NATIVE_INIT_EXE").unwrap_or(buck_output(
-        &root,
-        "//userspace/native_init:native_init[init]",
-    )?);
-    let child_exe = env_path("BUCK_CHILD_EXE").unwrap_or(buck_output(
-        &root,
-        "//userspace/native_init:native_init[child]",
-    )?);
-    let ntdll_dll = env_path("BUCK_NTDLL_DLL").unwrap_or(buck_output(
-        &root,
-        "//userspace/native_init:native_init[ntdll_dll]",
-    )?);
+    let ovmf_fd = required_env_path("BUCK_OVMF_FD")?;
+    let kernel_bin = required_env_path("BUCK_KERNEL_BIN")?;
+    let mkrootfs_bin = required_env_path("BUCK_MKROOTFS_BIN")?;
+    let native_init_exe = required_env_path("BUCK_NATIVE_INIT_EXE")?;
+    let child_exe = required_env_path("BUCK_CHILD_EXE")?;
+    let ntdll_dll = required_env_path("BUCK_NTDLL_DLL")?;
 
     let rootfs_img = root.join("rootfs.img");
     let efi_root = root.join("efi_root");
@@ -72,7 +63,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut qemu_args = vec![
         "-bios".to_string(),
-        "DEBUGX64_OVMF.fd".to_string(),
+        ovmf_fd.display().to_string(),
         "-smp".to_string(),
         "2".to_string(),
         "-drive".to_string(),
@@ -97,28 +88,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn buck_output(root: &Path, target: &str) -> Result<PathBuf, Box<dyn Error>> {
-    let output = run_cmd(
-        Command::new("buck2")
-            .arg("build")
-            .arg("--show-output")
-            .arg(target)
-            .current_dir(root),
-    )?;
-    let line = output
-        .lines()
-        .rev()
-        .find(|line| line.contains("buck-out/"))
-        .ok_or_else(|| format!("buck2 did not report an output for {target}"))?;
-    let path = line
-        .split_whitespace()
-        .last()
-        .ok_or_else(|| format!("failed to parse buck2 output line: {line}"))?;
-    Ok(root.join(path))
-}
-
 fn env_path(name: &str) -> Option<PathBuf> {
     env::var_os(name).map(PathBuf::from)
+}
+
+fn required_env_path(name: &str) -> Result<PathBuf, Box<dyn Error>> {
+    env_path(name).ok_or_else(|| {
+        format!("missing {name}; run this binary through buck2 so artifact paths are injected")
+            .into()
+    })
 }
 
 fn build_rootfs_from_dir(

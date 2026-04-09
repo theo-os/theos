@@ -30,3 +30,11 @@ rust_binary(
         "link-arg=-Tlinker.ld",
     ],
 )
+
+genrule(
+    name = "kernel_artifact",
+    out = "kernel.efi",
+    bash = "cp $(location :kernel) $OUT",
+    platform_override = "toolchains//:uefi",
+    visibility = ["PUBLIC"],
+)
