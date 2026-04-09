@@ -35,6 +35,8 @@ use limine::{
     BaseRevision,
 };
 #[cfg(target_os = "uefi")]
+use alloc::vec;
+#[cfg(target_os = "uefi")]
 use uefi::proto::loaded_image::LoadedImage;
 #[cfg(target_os = "uefi")]
 use uefi::proto::media::block::BlockIO;
@@ -134,6 +136,8 @@ fn install_uefi_root_device(
     image_handle: uefi::Handle,
     system_table: &uefi::table::SystemTable<uefi::table::Boot>,
 ) {
+    const CRABFS_SUPERBLOCK_MAGIC: [u8; 4] = *b"XFSB";
+
     let Ok(loaded_image) = system_table
         .boot_services()
         .open_protocol_exclusive::<LoadedImage>(image_handle)
@@ -173,11 +177,16 @@ fn install_uefi_root_device(
         let io_align = media.io_align() as usize;
         let media_id = media.media_id();
         let last_block = media.last_block();
+        let mut sector0 = vec![0u8; block_size.max(4)];
+        if block_io.read_blocks(media_id, 0, &mut sector0).is_err() {
+            continue;
+        }
+        if sector0[..4] != CRABFS_SUPERBLOCK_MAGIC {
+            continue;
+        }
         let ptr = (&*block_io as *const BlockIO).cast_mut();
         core::mem::forget(block_io);
-        let replace = best
-            .as_ref()
-            .is_none_or(|(_, _, _, _, best_last_block)| last_block > *best_last_block);
+        let replace = best.is_none_or(|(_, _, _, _, best_last_block)| last_block > best_last_block);
         if replace {
             best = Some((ptr, media_id, block_size, io_align, last_block));
         }

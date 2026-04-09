@@ -1,0 +1,6 @@
+# Minimal real-Windows native bootstrap payload for ROOTFS_PROFILE=windows-real.
+# Paths are relative to install.wim root.
+
+Windows/System32/ntdll.dll
+Windows/System32/bcd.dll
+Windows/System32/autochk.exe

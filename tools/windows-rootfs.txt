@@ -1,0 +1,24 @@
+# Curated Windows payload for ROOTFS_PROFILE=windows.
+# Paths are relative to the extracted WIM root.
+
+Windows/System32/ntdll.dll
+
+# Native/system executables that are useful for loader testing.
+Windows/System32/autochk.exe
+Windows/System32/cmd.exe
+Windows/System32/hostname.exe
+Windows/System32/whoami.exe
+
+# Core Win32 loader/runtime DLLs used by common console binaries.
+Windows/System32/kernel32.dll
+Windows/System32/kernelbase.dll
+Windows/System32/msvcp_win.dll
+Windows/System32/ucrtbase.dll
+Windows/System32/vcruntime140.dll
+
+# Supporting DLLs commonly pulled in by console/system tools.
+Windows/System32/advapi32.dll
+Windows/System32/bcrypt.dll
+Windows/System32/rpcrt4.dll
+Windows/System32/sechost.dll
+Windows/System32/ws2_32.dll

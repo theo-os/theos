@@ -71,8 +71,8 @@ pub fn init_for_cpu(cpu_id: usize) {
             core::ptr::addr_of!(SYSCALL_STACKS[cpu]) as *const u8 as usize + SYSCALL_STACK_SIZE;
         SYSCALL_CPU_LOCALS[cpu].kernel_rsp = stack_top;
         let cpu_local = VirtAddr::from_ptr(core::ptr::addr_of!(SYSCALL_CPU_LOCALS[cpu]));
-        GsBase::write(cpu_local);
         KernelGsBase::write(cpu_local);
+        GsBase::write(VirtAddr::new(0));
     }
     Star::write(
         gdt::user_code_selector(),
@@ -104,6 +104,7 @@ pub fn set_kernel_stack_top(stack_top: usize) {
 #[unsafe(naked)]
 pub unsafe extern "C" fn syscall_handler() -> ! {
     core::arch::naked_asm!(
+        "swapgs",
         "mov %rsp, %gs:8",
         "mov %gs:0, %rsp",
         "sub $176, %rsp",
@@ -149,6 +150,7 @@ pub unsafe extern "C" fn syscall_handler() -> ! {
         "mov 64(%rsp), %rcx",
         "mov 56(%rsp), %rsp",
         "mov %gs:16, %rax",
+        "swapgs",
         "sysretq",
         options(att_syntax)
     )

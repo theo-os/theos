@@ -3852,6 +3852,24 @@ http_archive(
 )
 
 cargo.rust_library(
+    name = "serde_spanned-1",
+    srcs = [":serde_spanned-1.1.1.crate"],
+    crate = "serde_spanned",
+    crate_root = "serde_spanned-1.1.1.crate/src/lib.rs",
+    edition = "2024",
+    features = ["alloc"],
+    visibility = [],
+)
+
+http_archive(
+    name = "serde_spanned-1.1.1.crate",
+    sha256 = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26",
+    strip_prefix = "serde_spanned-1.1.1",
+    urls = ["https://static.crates.io/crates/serde_spanned/1.1.1/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
     name = "sha1-0.10",
     srcs = [":sha1-0.10.6.crate"],
     crate = "sha1",
@@ -4574,6 +4592,51 @@ http_archive(
     sha256 = "9ae9cec805b01e8fc3fd2fe289f89149a9b66dd16786abd8b19cfa7b48cb0098",
     strip_prefix = "tokio-util-0.7.18",
     urls = ["https://static.crates.io/crates/tokio-util/0.7.18/download"],
+    visibility = [],
+)
+
+alias(
+    name = "toml",
+    actual = ":toml-1",
+    visibility = ["PUBLIC"],
+)
+
+cargo.rust_library(
+    name = "toml-1",
+    srcs = [":toml-1.1.2+spec-1.1.0.crate"],
+    crate = "toml",
+    crate_root = "toml-1.1.2+spec-1.1.0.crate/src/lib.rs",
+    edition = "2024",
+    visibility = [],
+    deps = [
+        ":serde_spanned-1",
+        ":toml_datetime-1",
+    ],
+)
+
+http_archive(
+    name = "toml-1.1.2+spec-1.1.0.crate",
+    sha256 = "81f3d15e84cbcd896376e6730314d59fb5a87f31e4b038454184435cd57defee",
+    strip_prefix = "toml-1.1.2+spec-1.1.0",
+    urls = ["https://static.crates.io/crates/toml/1.1.2+spec-1.1.0/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "toml_datetime-1",
+    srcs = [":toml_datetime-1.1.1+spec-1.1.0.crate"],
+    crate = "toml_datetime",
+    crate_root = "toml_datetime-1.1.1+spec-1.1.0.crate/src/lib.rs",
+    edition = "2024",
+    features = ["alloc"],
+    visibility = [],
+)
+
+http_archive(
+    name = "toml_datetime-1.1.1+spec-1.1.0.crate",
+    sha256 = "3165f65f62e28e0115a00b2ebdd37eb6f3b641855f9d636d3cd4103767159ad7",
+    strip_prefix = "toml_datetime-1.1.1+spec-1.1.0",
+    urls = ["https://static.crates.io/crates/toml_datetime/1.1.1+spec-1.1.0/download"],
     visibility = [],
 )
 

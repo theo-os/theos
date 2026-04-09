@@ -20,7 +20,7 @@ use alloc::vec::Vec;
 use goblin::pe::PE;
 use spin::{Lazy, Mutex};
 use x86_64::registers::control::Cr3;
-use x86_64::registers::model_specific::FsBase;
+use x86_64::registers::model_specific::{FsBase, GsBase};
 use x86_64::structures::paging::{Page, PageSize, PageTable, PageTableFlags, PhysFrame, Size4KiB};
 use x86_64::VirtAddr;
 
@@ -32,6 +32,7 @@ const USER_STACK_TOP: u64 = 0x0000_7fff_ff00_0000;
 const USER_STACK_PAGES: u64 = 64;
 const USER_ENV_BASE: u64 = 0x0000_7fff_f000_0000;
 const USER_ENV_PAGES: u64 = 16;
+const USER_BOOTSTRAP_BASE: u64 = USER_ENV_BASE + USER_ENV_PAGES * PAGE_SIZE;
 const USER_ALLOC_BASE: u64 = 0x0000_1000_0000_0000;
 const KERNEL_VIRTIO_DMA_BASE: u64 = 0x0000_6666_0000_0000;
 
@@ -117,6 +118,7 @@ pub struct UserProcess {
     teb_addr: u64,
     params_addr: u64,
     fs_base: u64,
+    gs_base: u64,
     image_base: u64,
     handles: Vec<Option<HandleEntry>>,
     standard_input: Handle,
@@ -141,6 +143,7 @@ impl Default for UserProcess {
             teb_addr: 0,
             params_addr: 0,
             fs_base: 0,
+            gs_base: 0,
             image_base: 0,
             handles: Vec::new(),
             standard_input: 0,
@@ -454,7 +457,7 @@ fn destroy_address_space(asid: u32) -> Result<(), NtStatus> {
 fn switch_active_process(pid: Option<u32>) {
     x86_64::instructions::interrupts::without_interrupts(|| {
         let cpu = current_cpu();
-        let (next_asid, next_fs_base) = {
+        let (next_asid, next_fs_base, next_gs_base) = {
             let mut registry = REGISTRY.lock();
             let old_pid = match registry.active_pids[cpu] {
                 0 => None,
@@ -470,7 +473,7 @@ fn switch_active_process(pid: Option<u32>) {
                 registry.by_pid.insert(old_pid, old_proc);
             }
 
-            let (next_asid, next_fs_base) = if let Some(next_pid) = pid {
+            let (next_asid, next_fs_base, next_gs_base) = if let Some(next_pid) = pid {
                 let Some(next_proc) = registry.by_pid.remove(&next_pid) else {
                     registry.active_pids[cpu] = 0;
                     *slot = UserProcess::default();
@@ -478,21 +481,24 @@ fn switch_active_process(pid: Option<u32>) {
                 };
                 let asid = next_proc.address_space_id;
                 let fs_base = next_proc.fs_base;
+                let gs_base = next_proc.gs_base;
                 *slot = next_proc;
-                (asid, fs_base)
+                (asid, fs_base, gs_base)
             } else {
                 *slot = UserProcess::default();
-                (0, 0)
+                (0, 0, 0)
             };
             registry.active_pids[cpu] = pid.unwrap_or(0);
-            (next_asid, next_fs_base)
+            (next_asid, next_fs_base, next_gs_base)
         };
 
         if pid.is_some() {
             let _ = switch_address_space(next_asid);
             FsBase::write(VirtAddr::new(next_fs_base));
+            GsBase::write(VirtAddr::new(next_gs_base));
         } else {
             FsBase::write(VirtAddr::new(0));
+            GsBase::write(VirtAddr::new(0));
         }
     });
 }
@@ -508,6 +514,34 @@ pub fn pid() -> u32 {
 
 pub fn current_init_path() -> Option<String> {
     current_slot().lock().image_path.clone()
+}
+
+pub fn describe_user_rip(addr: u64) -> Option<(String, u64, u64)> {
+    let current = current_slot().lock();
+    current
+        .modules
+        .iter()
+        .find(|module| addr >= module.image_base && addr < module.image_base + module.size_of_image)
+        .map(|module| {
+            (
+                module.nt_path.clone(),
+                module.image_base,
+                addr.saturating_sub(module.image_base),
+            )
+        })
+}
+
+pub fn read_user_rip_bytes(addr: u64, len: usize) -> Option<Vec<u8>> {
+    if len == 0 || len > 32 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(len);
+    for offset in 0..len {
+        let ptr = (addr + offset as u64) as *const u8;
+        let byte = unsafe { core::ptr::read_volatile(ptr) };
+        out.push(byte);
+    }
+    Some(out)
 }
 
 fn slot_to_handle(slot: usize) -> Handle {
@@ -1953,6 +1987,13 @@ fn load_init_context(
             return Err(status);
         }
     };
+    let startup_rip = match install_startup_bootstrap(peb_addr, image.entry) {
+        Ok(rip) => rip,
+        Err(status) => {
+            println!("NT KERNEL: install_startup_bootstrap failed: {:#x}", status);
+            return Err(status);
+        }
+    };
     {
         let mut current = current_slot().lock();
         current.pid = pid;
@@ -1962,16 +2003,62 @@ fn load_init_context(
         current.teb_addr = teb_addr;
         current.params_addr = params_addr;
         current.fs_base = teb_addr;
+        current.gs_base = teb_addr;
     }
     FsBase::write(VirtAddr::new(teb_addr));
+    GsBase::write(VirtAddr::new(teb_addr));
     Ok(process::SavedTaskContext {
-        rip: image.entry as usize,
+        rip: startup_rip as usize,
+        rcx: peb_addr as usize,
         cs: usize::from(gdt::user_code_selector().0),
         rflags: 0x202,
         rsp: align_down(stack_top - 0x20, 16) as usize,
         ss: usize::from(gdt::user_data_selector().0),
         ..process::SavedTaskContext::default()
     })
+}
+
+fn install_startup_bootstrap(peb_addr: u64, entry_rip: u64) -> Result<u64, NtStatus> {
+    let ntdll = load_module("ntdll.dll")?;
+    let rtl_create_heap = match resolve_export_name(&ntdll, "RtlCreateHeap") {
+        Ok(addr) => addr,
+        Err(status) => {
+            println!(
+                "NT KERNEL: resolve_export_name(RtlCreateHeap) failed status={:#x}",
+                status
+            );
+            return Err(status);
+        }
+    };
+    map_region(USER_BOOTSTRAP_BASE, PAGE_SIZE, nt::PAGE_EXECUTE_READWRITE)?;
+
+    let mut code = Vec::with_capacity(80);
+    code.extend_from_slice(&[0x48, 0x31, 0xC9]); // xor rcx, rcx
+    code.extend_from_slice(&[0x48, 0x31, 0xD2]); // xor rdx, rdx
+    code.extend_from_slice(&[0x4D, 0x31, 0xC0]); // xor r8, r8
+    code.extend_from_slice(&[0x4D, 0x31, 0xC9]); // xor r9, r9
+    code.extend_from_slice(&[0x48, 0x83, 0xEC, 0x30]); // sub rsp, 0x30
+    code.extend_from_slice(&[0x48, 0xC7, 0x44, 0x24, 0x20, 0x00, 0x00, 0x00, 0x00]); // mov qword [rsp+0x20], 0
+    code.extend_from_slice(&[0x48, 0xC7, 0x44, 0x24, 0x28, 0x00, 0x00, 0x00, 0x00]); // mov qword [rsp+0x28], 0
+    code.extend_from_slice(&[0x48, 0xB8]); // mov rax, imm64
+    code.extend_from_slice(&rtl_create_heap.to_le_bytes());
+    code.extend_from_slice(&[0xFF, 0xD0]); // call rax
+    code.extend_from_slice(&[0x48, 0x83, 0xC4, 0x30]); // add rsp, 0x30
+    code.extend_from_slice(&[0x48, 0xB9]); // mov rcx, imm64
+    code.extend_from_slice(&peb_addr.to_le_bytes());
+    code.extend_from_slice(&[0x48, 0x89, 0x41, 0x30]); // mov [rcx+0x30], rax
+    code.extend_from_slice(&[0x48, 0xB8]); // mov rax, imm64
+    code.extend_from_slice(&entry_rip.to_le_bytes());
+    code.extend_from_slice(&[0xFF, 0xE0]); // jmp rax
+
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            code.as_ptr(),
+            USER_BOOTSTRAP_BASE as *mut u8,
+            code.len(),
+        );
+    }
+    Ok(USER_BOOTSTRAP_BASE)
 }
 
 fn load_module(nt_path: &str) -> Result<LoadedImage, NtStatus> {
@@ -2436,10 +2523,11 @@ fn entry_rva(entry: &goblin::pe::export::ExportAddressTableEntry) -> usize {
 }
 
 fn resolve_export_name(module: &LoadedImage, symbol: &str) -> Result<u64, NtStatus> {
+    let symbol_lower = symbol.to_ascii_lowercase();
     let Some((_, target)) = module
         .exports_by_name
         .iter()
-        .find(|(name, _)| name == symbol)
+        .find(|(name, _)| name == &symbol_lower)
     else {
         return Err(STATUS_OBJECT_NAME_NOT_FOUND);
     };
@@ -2593,6 +2681,7 @@ fn build_process_environment(nt_path: &str, stack_top: u64) -> Result<(u64, u64,
         params.standard_output = current.standard_output;
         params.standard_error = current.standard_error;
     }
+    params.flags = nt::RTL_USER_PROCESS_PARAMETERS_NORMALIZED;
     params.image_path_name = UnicodeString {
         length: (image_utf16.len() * 2) as u16,
         maximum_length: (image_utf16.len() * 2 + 2) as u16,
@@ -2698,7 +2787,7 @@ fn build_process_environment(nt_path: &str, stack_top: u64) -> Result<(u64, u64,
 
     let peb = Peb {
         image_base_address: current_slot().lock().image_base as usize,
-        ldr: ldr_addr as usize,
+        ldr: 0,
         process_parameters: params_addr as *mut RtlUserProcessParameters,
         ..Peb::default()
     };

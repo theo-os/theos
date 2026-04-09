@@ -17,3 +17,7 @@ target/
 *.pdb
 /buck-out
 .codex
+.rootfs-staging
+.rootfs-build.manifest
+.rootfs-extract.manifest
+.invest-*

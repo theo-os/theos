@@ -22,6 +22,12 @@ struct Args {
 
     #[arg(short, long, default_value = "sources/install.wim")]
     wim_path: String,
+
+    #[arg(long = "include-path")]
+    include_paths: Vec<String>,
+
+    #[arg(long)]
+    include_list: Option<PathBuf>,
 }
 
 #[derive(Error, Debug)]
@@ -107,12 +113,19 @@ struct LookupEntry {
 
 fn main() -> Result<(), WimUnpackError> {
     let args = Args::parse();
+    let include_paths = load_include_paths(&args)?;
 
     println!("Opening ISO: {}", args.iso.display());
     let mut wim_reader = open_wim_from_iso(&args.iso, &args.wim_path)?;
     println!("Found WIM in ISO");
 
-    unpack_wim(&mut wim_reader, &args.iso, &args.wim_path, &args.output)?;
+    unpack_wim(
+        &mut wim_reader,
+        &args.iso,
+        &args.wim_path,
+        &args.output,
+        include_paths.as_deref(),
+    )?;
 
     Ok(())
 }
@@ -121,12 +134,17 @@ trait ReadSeek: Read + Seek + Send {}
 
 impl<T: Read + Seek + Send> ReadSeek for T {}
 
-fn open_wim_from_iso(iso_path: &PathBuf, wim_path: &str) -> Result<Box<dyn ReadSeek>, WimUnpackError> {
+fn open_wim_from_iso(
+    iso_path: &PathBuf,
+    wim_path: &str,
+) -> Result<Box<dyn ReadSeek>, WimUnpackError> {
     match iso9660::open_file(iso_path, wim_path) {
         Ok(reader) => Ok(Box::new(reader)),
         Err(iso9660::Error::FileNotFound(_)) => match udf::open_file(iso_path, wim_path) {
             Ok(reader) => Ok(Box::new(reader)),
-            Err(udf::Error::FileNotFound(_)) => Err(WimUnpackError::FileNotFound(wim_path.to_string())),
+            Err(udf::Error::FileNotFound(_)) => {
+                Err(WimUnpackError::FileNotFound(wim_path.to_string()))
+            }
             Err(err) => Err(WimUnpackError::Iso(err.to_string())),
         },
         Err(err) => Err(WimUnpackError::Iso(err.to_string())),
@@ -138,6 +156,7 @@ fn unpack_wim<R: Read + Seek>(
     iso_path: &Path,
     wim_path: &str,
     output: &Path,
+    include_paths: Option<&[String]>,
 ) -> Result<(), WimUnpackError> {
     wim.seek(SeekFrom::Start(0))?;
     let header: WimHeader = wim.read_le()?;
@@ -181,6 +200,8 @@ fn unpack_wim<R: Read + Seek>(
         total_security_size,
         &lookup_by_hash,
         output,
+        Path::new(""),
+        include_paths,
         &mut tasks,
     )?;
 
@@ -384,7 +405,9 @@ fn read_resource<R: Read + Seek + ?Sized>(
     let compressed_data_len = res
         .compressed_size()
         .checked_sub(table_len)
-        .ok_or_else(|| WimUnpackError::Wim("Compressed resource size smaller than table".to_string()))?;
+        .ok_or_else(|| {
+            WimUnpackError::Wim("Compressed resource size smaller than table".to_string())
+        })?;
     let mut previous_cumulative_size = 0u64;
     for i in 0..num_chunks {
         let cumulative_size = if i == num_chunks - 1 {
@@ -395,7 +418,9 @@ fn read_resource<R: Read + Seek + ?Sized>(
         let compressed_chunk_size = (cumulative_size - previous_cumulative_size) as usize;
 
         let mut chunk_data = vec![0u8; compressed_chunk_size];
-        wim.seek(SeekFrom::Start(res.offset + table_len + previous_cumulative_size))?;
+        wim.seek(SeekFrom::Start(
+            res.offset + table_len + previous_cumulative_size,
+        ))?;
         wim.read_exact(&mut chunk_data)?;
 
         let out_chunk_size = if i == num_chunks - 1 {
@@ -427,28 +452,40 @@ fn collect_tasks(
     offset: u64,
     lookup_by_hash: &HashMap<[u8; 20], LookupEntry>,
     output_path: &Path,
+    relative_path: &Path,
+    include_paths: Option<&[String]>,
     tasks: &mut Vec<ExtractTask>,
 ) -> Result<(), WimUnpackError> {
     let Some(dentry) = read_dentry(metadata, offset)? else {
         return Ok(());
     };
 
+    let entry_relative_path = if dentry.name.is_empty() {
+        relative_path.to_path_buf()
+    } else {
+        relative_path.join(&dentry.name)
+    };
+
     if !dentry.name.is_empty() {
         let path = output_path.join(&dentry.name);
         if dentry.attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
-            create_dir_all(&path)?;
-        } else if let Some(entry) = lookup_by_hash.get(&dentry.hash) {
-            if let Some(parent) = path.parent() {
-                create_dir_all(parent)?;
+            if should_descend(&entry_relative_path, include_paths) {
+                create_dir_all(&path)?;
             }
-            tasks.push(ExtractTask {
-                path,
-                res_entry: entry.res_entry,
-            });
+        } else if let Some(entry) = lookup_by_hash.get(&dentry.hash) {
+            if should_extract(&entry_relative_path, include_paths) {
+                if let Some(parent) = path.parent() {
+                    create_dir_all(parent)?;
+                }
+                tasks.push(ExtractTask {
+                    path,
+                    res_entry: entry.res_entry,
+                });
+            }
         }
     }
 
-    if dentry.subdir_offset != 0 {
+    if dentry.subdir_offset != 0 && should_descend(&entry_relative_path, include_paths) {
         let mut child_offset = dentry.subdir_offset;
         loop {
             let Some(child) = read_dentry(metadata, child_offset)? else {
@@ -464,6 +501,8 @@ fn collect_tasks(
                 } else {
                     &child_output_path
                 },
+                &entry_relative_path,
+                include_paths,
                 tasks,
             )?;
             child_offset = child.next_offset;
@@ -479,7 +518,11 @@ fn extract_blob_to_path<R: Read + Seek + ?Sized>(
     chunk_size: u32,
 ) -> Result<(), WimUnpackError> {
     let data = read_resource(wim, &task.res_entry, chunk_size).map_err(|err| {
-        WimUnpackError::Wim(format!("failed to read blob for {}: {}", task.path.display(), err))
+        WimUnpackError::Wim(format!(
+            "failed to read blob for {}: {}",
+            task.path.display(),
+            err
+        ))
     })?;
     if let Some(parent) = task.path.parent() {
         create_dir_all(parent)?;
@@ -487,4 +530,68 @@ fn extract_blob_to_path<R: Read + Seek + ?Sized>(
     let mut f = File::create(&task.path)?;
     f.write_all(&data)?;
     Ok(())
+}
+
+fn load_include_paths(args: &Args) -> Result<Option<Vec<String>>, WimUnpackError> {
+    let mut include_paths = Vec::new();
+    if let Some(include_list) = &args.include_list {
+        let contents = std::fs::read_to_string(include_list)?;
+        for line in contents.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            include_paths.push(normalize_include_path(trimmed));
+        }
+    }
+    include_paths.extend(
+        args.include_paths
+            .iter()
+            .map(|path| normalize_include_path(path)),
+    );
+    if include_paths.is_empty() {
+        Ok(None)
+    } else {
+        include_paths.sort();
+        include_paths.dedup();
+        Ok(Some(include_paths))
+    }
+}
+
+fn normalize_include_path(path: &str) -> String {
+    path.trim_matches('/')
+        .replace('\\', "/")
+        .to_ascii_lowercase()
+}
+
+fn should_extract(path: &Path, include_paths: Option<&[String]>) -> bool {
+    let Some(include_paths) = include_paths else {
+        return true;
+    };
+    let normalized = normalize_relative_path(path);
+    include_paths.iter().any(|include| include == &normalized)
+}
+
+fn should_descend(path: &Path, include_paths: Option<&[String]>) -> bool {
+    let Some(include_paths) = include_paths else {
+        return true;
+    };
+    let normalized = normalize_relative_path(path);
+    if normalized.is_empty() {
+        return true;
+    }
+    include_paths.iter().any(|include| {
+        include == &normalized
+            || include
+                .strip_prefix(&normalized)
+                .is_some_and(|rest| rest.starts_with('/'))
+    })
+}
+
+fn normalize_relative_path(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+        .to_ascii_lowercase()
 }

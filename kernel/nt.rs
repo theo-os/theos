@@ -31,6 +31,7 @@ pub const STATUS_IMAGE_MACHINE_TYPE_MISMATCH: NtStatus = 0x4000_002Eu32 as i32;
 pub const STATUS_INVALID_IMAGE_FORMAT: NtStatus = 0xC000_007Bu32 as i32;
 pub const STATUS_NOT_SUPPORTED: NtStatus = 0xC000_00BBu32 as i32;
 pub const STATUS_INVALID_DEVICE_REQUEST: NtStatus = 0xC000_0010u32 as i32;
+pub const RTL_USER_PROCESS_PARAMETERS_NORMALIZED: u32 = 0x0000_0001;
 
 pub const OBJ_CASE_INSENSITIVE: u32 = 0x0000_0040;
 pub const SYNCHRONIZE: AccessMask = 0x0010_0000;
@@ -199,32 +200,58 @@ pub struct FilePositionInformation {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct CurDir {
+    pub dos_path: UnicodeString,
+    pub handle: Handle,
+}
+
+impl Default for CurDir {
+    fn default() -> Self {
+        Self {
+            dos_path: UnicodeString::default(),
+            handle: 0,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct RtlUserProcessParameters {
-    pub length: u32,
     pub maximum_length: u32,
+    pub length: u32,
     pub flags: u32,
     pub debug_flags: u32,
     pub console_handle: usize,
-    pub standard_input: Handle,
-    pub standard_output: Handle,
-    pub standard_error: Handle,
+    pub console_flags: u32,
+    pub padding0: u32,
+    pub standard_input: usize,
+    pub standard_output: usize,
+    pub standard_error: usize,
+    pub current_directory: CurDir,
+    pub dll_path: UnicodeString,
     pub image_path_name: UnicodeString,
     pub command_line: UnicodeString,
+    pub environment: usize,
 }
 
 impl Default for RtlUserProcessParameters {
     fn default() -> Self {
         Self {
-            length: core::mem::size_of::<Self>() as u32,
             maximum_length: core::mem::size_of::<Self>() as u32,
+            length: core::mem::size_of::<Self>() as u32,
             flags: 0,
             debug_flags: 0,
             console_handle: 0,
+            console_flags: 0,
+            padding0: 0,
             standard_input: 0,
             standard_output: 0,
             standard_error: 0,
+            current_directory: CurDir::default(),
+            dll_path: UnicodeString::default(),
             image_path_name: UnicodeString::default(),
             command_line: UnicodeString::default(),
+            environment: 0,
         }
     }
 }
@@ -240,6 +267,8 @@ pub struct Peb {
     pub image_base_address: usize,
     pub ldr: usize,
     pub process_parameters: *mut RtlUserProcessParameters,
+    pub sub_system_data: usize,
+    pub process_heap: usize,
 }
 
 #[repr(C)]
@@ -276,6 +305,13 @@ pub struct Teb {
     pub client_id: ClientId,
     pub reserved2: [usize; 20],
 }
+
+const _: () = {
+    assert!(core::mem::offset_of!(RtlUserProcessParameters, image_path_name) == 0x60);
+    assert!(core::mem::offset_of!(RtlUserProcessParameters, command_line) == 0x70);
+    assert!(core::mem::offset_of!(Peb, process_heap) == 0x30);
+    assert!(core::mem::offset_of!(Teb, process_environment_block) == 0x60);
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectType {

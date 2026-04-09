@@ -20,6 +20,7 @@ command_alias(
         "BUCK_OVMF_FD": "$(location :ovmf_firmware)",
         "BUCK_KERNEL_BIN": "$(location //kernel:kernel_artifact)",
         "BUCK_MKROOTFS_BIN": "$(location //tools/mkrootfs:mkrootfs)",
+        "BUCK_WIMUNPACK_BIN": "$(location //tools/wimunpack:wimunpack)",
         "BUCK_NATIVE_INIT_EXE": "$(location //userspace/native_init:native_init[init])",
         "BUCK_CHILD_EXE": "$(location //userspace/native_init:native_init[child])",
         "BUCK_NTDLL_DLL": "$(location //userspace/native_init:native_init[ntdll_dll])",

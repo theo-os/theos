@@ -175,6 +175,26 @@ fn log_user_fault(
         stack_frame.stack_segment.0,
         stack_frame.cpu_flags.bits()
     );
+    let rip = stack_frame.instruction_pointer.as_u64();
+    if let Some((module, base, offset)) = crate::user::describe_user_rip(rip) {
+        println!(
+            "rip module={} base={:#x} offset={:#x}",
+            module, base, offset
+        );
+    }
+    if let Some(bytes) = crate::user::read_user_rip_bytes(rip, 8) {
+        println!(
+            "rip bytes={:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
+            bytes.first().copied().unwrap_or(0),
+            bytes.get(1).copied().unwrap_or(0),
+            bytes.get(2).copied().unwrap_or(0),
+            bytes.get(3).copied().unwrap_or(0),
+            bytes.get(4).copied().unwrap_or(0),
+            bytes.get(5).copied().unwrap_or(0),
+            bytes.get(6).copied().unwrap_or(0),
+            bytes.get(7).copied().unwrap_or(0),
+        );
+    }
     println!("{:#?}", stack_frame);
 }
 
