@@ -1,6 +1,7 @@
 extern crate alloc;
 
-use crate::{gdt, nt, user};
+use crate::{gdt, nt, println, user};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use x86_64::instructions::segmentation::Segment;
 use x86_64::registers::model_specific::{
     Efer, EferFlags, GsBase, KernelGsBase, LStar, SFMask, Star,
@@ -32,6 +33,8 @@ static mut SYSCALL_CPU_LOCALS: [SyscallCpuLocal; MAX_CPUS] = [const {
 
 static mut SYSCALL_STACKS: [SyscallStack; MAX_CPUS] =
     [const { SyscallStack([0; SYSCALL_STACK_SIZE]) }; MAX_CPUS];
+static UNKNOWN_SYSCALL_LOG_COUNT: AtomicUsize = AtomicUsize::new(0);
+static FAILED_SYSCALL_LOG_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[repr(C)]
 pub struct SyscallFrame {
@@ -168,6 +171,91 @@ extern "sysv64" fn syscall_dispatch(frame: *mut SyscallFrame) -> usize {
     }
     let frame = unsafe { &*frame };
     let result = match frame.nr {
+        // Windows x64 native syscall compatibility for real ntdll stubs.
+        4 => user::wait_for_single_object(frame.r10, frame.rdx != 0, frame.r8 as *const i64) as usize,
+        6 => user::read_file(
+            frame.r10,
+            stack_arg(frame, 0) as *mut nt::IoStatusBlock,
+            stack_arg(frame, 1) as *mut u8,
+            stack_arg(frame, 2),
+        ) as usize,
+        7 => user::device_io_control_file(
+            frame.r10,
+            frame.rdx,
+            frame.r8 as *mut (),
+            frame.r9 as *mut (),
+            stack_arg(frame, 0) as *mut nt::IoStatusBlock,
+            stack_arg(frame, 1) as u32,
+            stack_arg(frame, 2) as *const u8,
+            stack_arg(frame, 3) as u32,
+            stack_arg(frame, 4) as *mut u8,
+            stack_arg(frame, 5) as u32,
+        ) as usize,
+        8 => user::write_file(
+            frame.r10,
+            stack_arg(frame, 0) as *mut nt::IoStatusBlock,
+            stack_arg(frame, 1) as *const u8,
+            stack_arg(frame, 2),
+        ) as usize,
+        14 => user::set_event(frame.r10, frame.rdx as *mut i32) as usize,
+        15 => user::close_handle(frame.r10) as usize,
+        17 => user::query_information_file(
+            frame.r10,
+            frame.rdx as *mut nt::IoStatusBlock,
+            frame.r8 as *mut u8,
+            frame.r9 as u32,
+            stack_arg(frame, 0) as u32,
+        ) as usize,
+        24 if frame.rdx != 0 && frame.r9 != 0 => user::allocate_virtual_memory(
+            frame.r10,
+            frame.rdx as *mut usize,
+            frame.r9 as *mut usize,
+            stack_arg(frame, 1) as u32,
+        ) as usize,
+        25 => user::query_information_process(
+            frame.r10,
+            frame.rdx as u32,
+            frame.r8 as *mut u8,
+            frame.r9 as u32,
+            stack_arg(frame, 0) as *mut u32,
+        ) as usize,
+        30 => user::free_virtual_memory(
+            frame.r10,
+            frame.rdx as *mut usize,
+            frame.r8 as *mut usize,
+        ) as usize,
+        35 => user::query_virtual_memory(
+            frame.r10,
+            frame.rdx,
+            frame.r8 as u32,
+            frame.r9 as *mut u8,
+            stack_arg(frame, 0),
+            stack_arg(frame, 1) as *mut usize,
+        ) as usize,
+        39 => user::query_information_file(
+            frame.r10,
+            frame.rdx as *mut nt::IoStatusBlock,
+            frame.r8 as *mut u8,
+            frame.r9 as u32,
+            stack_arg(frame, 0) as u32,
+        ) as usize,
+        40 => user::map_view_of_section(
+            frame.r10,
+            frame.rdx,
+            frame.r8 as *mut usize,
+            stack_arg(frame, 3) as *mut usize,
+            stack_arg(frame, 6) as u32,
+        ) as usize,
+        42 => user::unmap_view_of_section(frame.r10, frame.rdx) as usize,
+        // Windows native syscall number for NtTerminateProcess on recent x64 builds.
+        44 => user::terminate_process(frame.r10, frame.rdx as i32) as usize,
+        51 => user::create_file(
+            frame.r10 as *mut usize,
+            frame.rdx as u32,
+            frame.r8 as *const nt::ObjectAttributes,
+            frame.r9 as *mut nt::IoStatusBlock,
+        ) as usize,
+        52 => user::delay_execution(frame.r10 != 0, frame.rdx as *const i64) as usize,
         // Windows native syscall number for NtQuerySystemInformation on recent x64 builds.
         54 => user::query_system_information(
             frame.r10 as u32,
@@ -175,16 +263,62 @@ extern "sysv64" fn syscall_dispatch(frame: *mut SyscallFrame) -> usize {
             frame.r8 as u32,
             frame.r9 as *mut u32,
         ) as usize,
-        // Windows native syscall number for NtAllocateVirtualMemory on recent x64 builds.
-        // Args: (ProcessHandle, BaseAddress*, ZeroBits, RegionSize*, AllocationType, Protect)
-        24 if frame.rdx != 0 && frame.r9 != 0 => user::allocate_virtual_memory(
+        55 => user::open_section(
+            frame.r10 as *mut usize,
+            frame.rdx as u32,
+            frame.r8 as *const nt::ObjectAttributes,
+        ) as usize,
+        57 => user::device_io_control_file(
+            frame.r10,
+            frame.rdx,
+            frame.r8 as *mut (),
+            frame.r9 as *mut (),
+            stack_arg(frame, 0) as *mut nt::IoStatusBlock,
+            stack_arg(frame, 1) as u32,
+            stack_arg(frame, 2) as *const u8,
+            stack_arg(frame, 3) as u32,
+            stack_arg(frame, 4) as *mut u8,
+            stack_arg(frame, 5) as u32,
+        ) as usize,
+        62 => user::clear_event(frame.r10) as usize,
+        70 => user::yield_execution() as usize,
+        72 => user::create_event(
+            frame.r10 as *mut usize,
+            frame.r9 as u32,
+            stack_arg(frame, 0) != 0,
+        ) as usize,
+        73 => user::query_information_file(
+            frame.r10,
+            frame.rdx as *mut nt::IoStatusBlock,
+            frame.r8 as *mut u8,
+            frame.r9 as u32,
+            stack_arg(frame, 0) as u32,
+        ) as usize,
+        74 => user::create_section(
+            frame.r10 as *mut usize,
+            frame.rdx as u32,
+            frame.r8 as *const nt::ObjectAttributes,
+            frame.r9 as *const i64,
+            stack_arg(frame, 0) as u32,
+            stack_arg(frame, 1) as u32,
+            stack_arg(frame, 2),
+        ) as usize,
+        80 => user::protect_virtual_memory(
             frame.r10,
             frame.rdx as *mut usize,
-            frame.r9 as *mut usize,
-            stack_arg(frame, 1) as u32,
+            frame.r8 as *mut usize,
+            frame.r9 as u32,
+            stack_arg(frame, 0) as *mut u32,
         ) as usize,
-        // Windows native syscall number for NtTerminateProcess on recent x64 builds.
-        44 => user::terminate_process(frame.r10, frame.rdx as i32) as usize,
+        83 => user::terminate_thread(frame.r10, frame.rdx as i32) as usize,
+        85 => user::create_file(
+            frame.r10 as *mut usize,
+            frame.rdx as u32,
+            frame.r8 as *const nt::ObjectAttributes,
+            frame.r9 as *mut nt::IoStatusBlock,
+        ) as usize,
+        91 => user::query_system_time(frame.r10 as *mut i64) as usize,
+        228 => user::display_string(frame.r10 as *const nt::UnicodeString) as usize,
         nt::SYSCALL_NT_CLOSE => user::close_handle(frame.a0) as usize,
         nt::SYSCALL_NT_QUERY_INFORMATION_PROCESS => user::query_information_process(
             frame.a0,
@@ -323,7 +457,34 @@ extern "sysv64" fn syscall_dispatch(frame: *mut SyscallFrame) -> usize {
             stack_arg(frame, 3) as usize,
             stack_arg(frame, 4) as *const (),
         ) as usize,
-        _ => nt::STATUS_NOT_IMPLEMENTED as usize,
+        _ => {
+            let seen = UNKNOWN_SYSCALL_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
+            if seen < 128 {
+                println!(
+                    "NT KERNEL: unknown syscall nr={} rcx={:#x} r10={:#x} rdx={:#x} r8={:#x} r9={:#x}",
+                    frame.nr,
+                    frame.rcx,
+                    frame.r10,
+                    frame.rdx,
+                    frame.r8,
+                    frame.r9
+                );
+            }
+            nt::STATUS_NOT_IMPLEMENTED as usize
+        }
     };
+    if result != nt::STATUS_SUCCESS as usize
+        && result != nt::STATUS_TIMEOUT as usize
+        && result != nt::STATUS_END_OF_FILE as usize
+        && result != nt::STATUS_INVALID_DEVICE_REQUEST as usize
+    {
+        let seen = FAILED_SYSCALL_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
+        if seen < 256 {
+            println!(
+                "NT KERNEL: syscall failure nr={} status={:#x} rcx={:#x} r10={:#x}",
+                frame.nr, result as u32, frame.rcx, frame.r10
+            );
+        }
+    }
     result
 }

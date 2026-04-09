@@ -37,6 +37,10 @@ const USER_ENV_PAGES: u64 = 16;
 const USER_BOOTSTRAP_BASE: u64 = USER_ENV_BASE + USER_ENV_PAGES * PAGE_SIZE;
 const USER_ALLOC_BASE: u64 = 0x0000_1000_0000_0000;
 const KERNEL_VIRTIO_DMA_BASE: u64 = 0x0000_6666_0000_0000;
+const NT_MAJOR_VERSION: u32 = 10;
+const NT_MINOR_VERSION: u32 = 0;
+const NT_BUILD_NUMBER: u16 = 26100;
+const VER_PLATFORM_WIN32_NT: u32 = 2;
 
 #[derive(Debug, Clone, Copy)]
 struct HandleEntry {
@@ -1432,6 +1436,18 @@ pub fn query_system_time(system_time: *mut i64) -> NtStatus {
     STATUS_SUCCESS
 }
 
+pub fn display_string(string: *const UnicodeString) -> NtStatus {
+    if string.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let text = match read_utf16_string(string) {
+        Ok(s) => s,
+        Err(status) => return status,
+    };
+    println!("NT DISPLAY: {}", text);
+    STATUS_SUCCESS
+}
+
 pub fn query_system_information(
     information_class: u32,
     system_information: *mut u8,
@@ -1493,6 +1509,27 @@ pub fn query_system_information(
             }
             unsafe {
                 core::ptr::write_bytes(system_information, 0, out_len as usize);
+                // Return a minimally plausible SYSTEM_PERFORMANCE_INFORMATION blob.
+                // Real Windows structures are larger/evolving, but several user-mode
+                // startup paths assume non-zero memory counters.
+                let write_u32 = |offset: usize, value: u32| {
+                    (system_information.add(offset) as *mut u32).write_unaligned(value);
+                };
+                let write_u64 = |offset: usize, value: u64| {
+                    (system_information.add(offset) as *mut u64).write_unaligned(value);
+                };
+                write_u64(0x00, (process::global_tick() as u64) * (SCHED_TICK_100NS as u64));
+                write_u64(0x08, 0);
+                write_u64(0x10, 0);
+                write_u64(0x18, 0);
+                write_u64(0x20, 0);
+                write_u64(0x28, 0);
+                write_u32(0x40, 0x20_000); // available pages
+                write_u32(0x44, 0x08_000); // committed pages
+                write_u32(0x48, 0x40_000); // commit limit
+                write_u32(0x4c, 0x42_000); // peak commit
+                write_u32(0x50, 0x40_000); // page faults
+                write_u32(0x90, 0x20_000); // resident available pages
             }
             STATUS_SUCCESS
         }
@@ -1812,6 +1849,25 @@ pub fn terminate_process(handle: Handle, exit_status: NtStatus) -> NtStatus {
     if handle != usize::MAX {
         return STATUS_NOT_IMPLEMENTED;
     }
+    let (peb_addr, ldr, process_heap, process_heaps_slot0) = {
+        let current = current_slot().lock();
+        let peb_addr = current.peb_addr;
+        if peb_addr != 0 {
+            let peb = unsafe { &*(peb_addr as *const Peb) };
+            let slot0 = if peb.process_heaps != 0 {
+                unsafe { *(peb.process_heaps as *const usize) }
+            } else {
+                0
+            };
+            (peb_addr, peb.ldr, peb.process_heap, slot0)
+        } else {
+            (0, 0, 0, 0)
+        }
+    };
+    println!(
+        "NT KERNEL: NtTerminateProcess(current) exit_status={:#x} peb={:#x} ldr={:#x} process_heap={:#x} process_heaps[0]={:#x}",
+        exit_status, peb_addr, ldr, process_heap, process_heaps_slot0
+    );
     exit_current(exit_status);
     process::on_task_exit()
 }
@@ -1820,6 +1876,10 @@ pub fn terminate_thread(handle: Handle, exit_status: NtStatus) -> NtStatus {
     if handle != usize::MAX - 4 {
         return STATUS_NOT_IMPLEMENTED;
     }
+    println!(
+        "NT KERNEL: NtTerminateThread(current) exit_status={:#x}",
+        exit_status
+    );
     exit_current(exit_status);
     process::on_task_exit()
 }
@@ -2180,6 +2240,7 @@ fn load_init_context(
         println!("NT KERNEL: seed_ntdll_heap_globals failed: {:#x}", status);
         return Err(status);
     }
+    seed_user_shared_data();
 
     let stack_bottom = USER_STACK_TOP - USER_STACK_PAGES * PAGE_SIZE;
     if let Err(status) = map_region(
@@ -2874,8 +2935,22 @@ fn build_process_environment(nt_path: &str, stack_top: u64) -> Result<(u64, u64,
         return Err(status);
     }
     let mut cursor = env_base;
-    let image_utf16: Vec<u16> = nt_path.encode_utf16().collect();
-    let cmd_utf16: Vec<u16> = nt_path.encode_utf16().collect();
+    let lower_path = nt_path.to_ascii_lowercase();
+    let is_windows_real_init = lower_path.ends_with("\\system32\\init.exe");
+    let is_autochk = lower_path.ends_with("\\system32\\autochk.exe");
+    let image_path_for_params = if is_windows_real_init {
+        "\\SystemRoot\\System32\\autochk.exe".to_string()
+    } else {
+        nt_path.to_string()
+    };
+    let image_utf16: Vec<u16> = image_path_for_params.encode_utf16().collect();
+    let command_line = if is_windows_real_init || is_autochk {
+        // Typical native boot invocation shape for autochk.
+        "autochk autochk *".to_string()
+    } else {
+        nt_path.to_string()
+    };
+    let cmd_utf16: Vec<u16> = command_line.encode_utf16().collect();
     let mut modules = current_slot().lock().modules.clone();
     if let Some(main_index) = modules
         .iter()
@@ -3050,9 +3125,10 @@ fn build_process_environment(nt_path: &str, stack_top: u64) -> Result<(u64, u64,
 
     let peb = Peb {
         image_base_address: current_slot().lock().image_base as usize,
-        ldr: 0,
+        ldr: ldr_addr as usize,
         process_parameters: params_addr as *mut RtlUserProcessParameters,
         fast_peb_lock: fast_peb_lock_addr as usize,
+        number_of_processors: 1,
         heap_segment_reserve: 0x100000,
         heap_segment_commit: 0x2000,
         heap_decommit_total_free_threshold: 0x10000,
@@ -3063,6 +3139,7 @@ fn build_process_environment(nt_path: &str, stack_top: u64) -> Result<(u64, u64,
         ..Peb::default()
     };
     unsafe { *(peb_addr as *mut Peb) = peb };
+    seed_peb_version_fields(peb_addr);
     unsafe { *(process_heaps_addr as *mut usize) = 0 };
     let fast_peb_lock = RtlCriticalSection {
         lock_count: -1,
@@ -3083,6 +3160,26 @@ fn build_process_environment(nt_path: &str, stack_top: u64) -> Result<(u64, u64,
     unsafe { *(teb_addr as *mut Teb) = teb };
     let _ = stack_top;
     Ok((peb_addr, teb_addr, params_addr))
+}
+
+fn seed_peb_version_fields(peb_addr: u64) {
+    unsafe {
+        // x64 PEB version fields used by many ntdll/runtime paths.
+        *((peb_addr + 0x118) as *mut u32) = NT_MAJOR_VERSION;
+        *((peb_addr + 0x11c) as *mut u32) = NT_MINOR_VERSION;
+        *((peb_addr + 0x120) as *mut u16) = NT_BUILD_NUMBER;
+        *((peb_addr + 0x124) as *mut u32) = VER_PLATFORM_WIN32_NT;
+    }
+}
+
+fn seed_user_shared_data() {
+    unsafe {
+        let base = USER_SHARED_DATA_BASE;
+        // KUSER_SHARED_DATA::NtBuildNumber / NtMajorVersion / NtMinorVersion.
+        *((base + 0x260) as *mut u32) = NT_BUILD_NUMBER as u32;
+        *((base + 0x26c) as *mut u32) = NT_MAJOR_VERSION;
+        *((base + 0x270) as *mut u32) = NT_MINOR_VERSION;
+    }
 }
 
 fn copy_utf16(dst: u64, text: &[u16]) {

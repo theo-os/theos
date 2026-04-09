@@ -27,6 +27,8 @@ pub mod virtio_blk;
 pub mod zram;
 
 use core::{arch::asm, panic::PanicInfo};
+use alloc::string::ToString;
+use alloc::vec::Vec;
 use limine::{
     request::{
         EntryPointRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker,
@@ -203,6 +205,31 @@ fn install_uefi_root_device(
     }
 }
 
+fn prepare_init_task(task_id: usize) -> Option<process::Task> {
+    let requested = cmdline::resolved_init_path();
+    let mut candidates = Vec::new();
+    if requested.eq_ignore_ascii_case("\\SystemRoot\\System32\\init.exe") {
+        candidates.push("\\SystemRoot\\System32\\autochk.exe".to_string());
+    }
+    candidates.push(requested.clone());
+
+    for init_path in candidates {
+        match user::create_init_task(task_id, &init_path) {
+            Ok(task) => {
+                println!("NT KERNEL: native init {} task prepared", init_path);
+                return Some(task);
+            }
+            Err(init_err) => {
+                println!(
+                    "NT KERNEL: native init {} prepare failed: {:#x}",
+                    init_path, init_err
+                );
+            }
+        }
+    }
+    None
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main() -> ! {
     unsafe {
@@ -267,19 +294,7 @@ pub extern "C" fn kernel_main() -> ! {
         match vfs::mount_uefi_root() {
             Ok(()) => {
                 println!("NT KERNEL: mounted root via UEFI BlockIO");
-                let init_path = cmdline::resolved_init_path();
-                match user::create_init_task(3, &init_path) {
-                    Ok(task) => {
-                        println!("NT KERNEL: native init {} task prepared", init_path);
-                        init_task = Some(task);
-                    }
-                    Err(init_err) => {
-                        println!(
-                            "NT KERNEL: native init {} prepare failed: {:#x}",
-                            init_path, init_err
-                        );
-                    }
-                }
+                init_task = prepare_init_task(3);
             }
             Err(mount_err) => {
                 println!("NT KERNEL: UEFI root mount failed: {:?}", mount_err);
@@ -296,19 +311,7 @@ pub extern "C" fn kernel_main() -> ! {
             match vfs::mount_root(dev) {
                 Ok(()) => {
                     println!("NT KERNEL: crabfs root mounted");
-                    let init_path = cmdline::resolved_init_path();
-                    match user::create_init_task(3, &init_path) {
-                        Ok(task) => {
-                            println!("NT KERNEL: native init {} task prepared", init_path);
-                            init_task = Some(task);
-                        }
-                        Err(err) => {
-                            println!(
-                                "NT KERNEL: native init {} prepare failed: {:#x}",
-                                init_path, err
-                            );
-                        }
-                    }
+                    init_task = prepare_init_task(3);
                 }
                 Err(_) => {
                     println!("NT KERNEL: crabfs mount failed");
@@ -324,19 +327,7 @@ pub extern "C" fn kernel_main() -> ! {
         (_, _, Err(err)) => match vfs::mount_uefi_root() {
             Ok(()) => {
                 println!("NT KERNEL: mounted root via UEFI BlockIO");
-                let init_path = cmdline::resolved_init_path();
-                match user::create_init_task(3, &init_path) {
-                    Ok(task) => {
-                        println!("NT KERNEL: native init {} task prepared", init_path);
-                        init_task = Some(task);
-                    }
-                    Err(init_err) => {
-                        println!(
-                            "NT KERNEL: native init {} prepare failed: {:#x}",
-                            init_path, init_err
-                        );
-                    }
-                }
+                init_task = prepare_init_task(3);
             }
             Err(mount_err) => {
                 println!(
