@@ -206,6 +206,19 @@ extern "sysv64" fn syscall_dispatch(frame: *mut SyscallFrame) -> usize {
             frame.r9 as u32,
             stack_arg(frame, 0) as u32,
         ) as usize,
+        18 => user::open_key(
+            frame.r10 as *mut usize,
+            frame.rdx as u32,
+            frame.r8 as *const nt::ObjectAttributes,
+        ) as usize,
+        23 => user::query_value_key(
+            frame.r10,
+            frame.rdx as *const nt::UnicodeString,
+            frame.r8 as u32,
+            frame.r9 as *mut u8,
+            stack_arg(frame, 0) as u32,
+            stack_arg(frame, 1) as *mut u32,
+        ) as usize,
         24 if frame.rdx != 0 && frame.r9 != 0 => user::allocate_virtual_memory(
             frame.r10,
             frame.rdx as *mut usize,

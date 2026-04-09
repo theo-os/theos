@@ -10,6 +10,7 @@ rust_binary(
     deps = [
         "//lib/crabfs:crabfs",
         "//lib/loader:loader",
+        "//lib/regf:regf",
         "third-party//:bitflags",
         "third-party//:goblin",
         "third-party//:limine",

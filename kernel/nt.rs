@@ -4,6 +4,8 @@ use crate::vfs;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use regf::Hive;
 use spin::{Lazy, Mutex};
 
 pub type NtStatus = i32;
@@ -370,6 +372,7 @@ pub enum ObjectType {
     Directory,
     SymbolicLink,
     File,
+    Key,
     Section,
     Process,
     Thread,
@@ -380,6 +383,11 @@ pub enum ObjectType {
 pub struct FileObject {
     pub path: String,
     pub vfs_handle: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct KeyObject {
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -417,6 +425,7 @@ pub enum ObjectData {
     Directory,
     SymbolicLink { target: String },
     File(FileObject),
+    Key(KeyObject),
     Section(SectionObject),
     Process(ProcessObject),
     Thread(ThreadObject),
@@ -445,6 +454,14 @@ static OBJECTS: Lazy<Mutex<ObjectManager>> = Lazy::new(|| {
     })
 });
 
+#[derive(Default)]
+struct RegistryState {
+    loaded: bool,
+    system_hive: Option<Hive>,
+}
+
+static REGISTRY: Lazy<Mutex<RegistryState>> = Lazy::new(|| Mutex::new(RegistryState::default()));
+
 pub fn init_namespace() {
     let mut objects = OBJECTS.lock();
     if !objects.named.is_empty() {
@@ -454,6 +471,8 @@ pub fn init_namespace() {
     let _ = create_named(&mut objects, "\\", ObjectData::Directory);
     let _ = create_named(&mut objects, "\\Device", ObjectData::Directory);
     let _ = create_named(&mut objects, "\\??", ObjectData::Directory);
+    let _ = create_named(&mut objects, "\\Registry", ObjectData::Directory);
+    let _ = create_named(&mut objects, "\\Registry\\Machine", ObjectData::Directory);
     let _ = create_named(&mut objects, "\\KnownDlls", ObjectData::Directory);
     let _ = create_named(&mut objects, "\\Device\\Crabfs0", ObjectData::Directory);
     let _ = create_named(
@@ -517,10 +536,117 @@ fn object_type_of(data: &ObjectData) -> ObjectType {
         ObjectData::Directory => ObjectType::Directory,
         ObjectData::SymbolicLink { .. } => ObjectType::SymbolicLink,
         ObjectData::File(_) => ObjectType::File,
+        ObjectData::Key(_) => ObjectType::Key,
         ObjectData::Section(_) => ObjectType::Section,
         ObjectData::Process(_) => ObjectType::Process,
         ObjectData::Thread(_) => ObjectType::Thread,
         ObjectData::Event(_) => ObjectType::Event,
+    }
+}
+
+fn read_file_all(path: &str) -> Result<Vec<u8>, NtStatus> {
+    let fd = vfs::open(path, 0).map_err(|_| STATUS_OBJECT_NAME_NOT_FOUND)?;
+    let mut data = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        let n = vfs::read(fd, &mut buf).map_err(|_| STATUS_UNSUCCESSFUL)?;
+        if n == 0 {
+            break;
+        }
+        data.extend_from_slice(&buf[..n]);
+    }
+    let _ = vfs::close(fd);
+    Ok(data)
+}
+
+fn ensure_system_hive_loaded() -> Result<(), NtStatus> {
+    let mut reg = REGISTRY.lock();
+    if reg.loaded {
+        return Ok(());
+    }
+    let data = read_file_all("/Windows/System32/config/SYSTEM")?;
+    let hive = Hive::parse(&data).map_err(|_| STATUS_INVALID_IMAGE_FORMAT)?;
+    reg.system_hive = Some(hive);
+    reg.loaded = true;
+    Ok(())
+}
+
+fn system_hive_subkey(path: &str) -> Option<String> {
+    let canonical = canonicalize_nt_path(path);
+    let lower = canonical.to_ascii_lowercase();
+    let prefix = "\\registry\\machine\\system";
+    if lower == prefix {
+        return Some(String::new());
+    }
+    if !lower.starts_with(prefix) {
+        return None;
+    }
+    let mut rest = &canonical[prefix.len()..];
+    while rest.starts_with('\\') {
+        rest = &rest[1..];
+    }
+    Some(rest.to_string())
+}
+
+pub fn open_key(path: &str) -> Result<u32, NtStatus> {
+    init_namespace();
+    ensure_system_hive_loaded()?;
+    let Some(subkey) = system_hive_subkey(path) else {
+        return Err(STATUS_OBJECT_NAME_NOT_FOUND);
+    };
+    let reg = REGISTRY.lock();
+    let Some(hive) = reg.system_hive.as_ref() else {
+        return Err(STATUS_OBJECT_NAME_NOT_FOUND);
+    };
+    if !hive.has_key(&subkey) {
+        return Err(STATUS_OBJECT_NAME_NOT_FOUND);
+    }
+    drop(reg);
+    let mut objects = OBJECTS.lock();
+    Ok(insert_unnamed(
+        &mut objects,
+        ObjectData::Key(KeyObject {
+            path: canonicalize_nt_path(path),
+        }),
+    ))
+}
+
+pub fn query_key_value(object_id: u32, value_name: &str) -> Result<(u32, Vec<u8>), NtStatus> {
+    ensure_system_hive_loaded()?;
+    let key_path = {
+        let objects = OBJECTS.lock();
+        let Some(record) = objects.objects.get(&object_id) else {
+            return Err(STATUS_INVALID_HANDLE);
+        };
+        match &record.data {
+            ObjectData::Key(key) => key.path.clone(),
+            _ => return Err(STATUS_OBJECT_TYPE_MISMATCH),
+        }
+    };
+    let Some(subkey) = system_hive_subkey(&key_path) else {
+        return Err(STATUS_OBJECT_NAME_NOT_FOUND);
+    };
+    let reg = REGISTRY.lock();
+    let Some(hive) = reg.system_hive.as_ref() else {
+        return Err(STATUS_OBJECT_NAME_NOT_FOUND);
+    };
+    let Some(value) = hive.query_value(&subkey, value_name) else {
+        return Err(STATUS_OBJECT_NAME_NOT_FOUND);
+    };
+    Ok((value.ty, value.data.clone()))
+}
+
+pub fn object_name(object_id: u32) -> Result<String, NtStatus> {
+    let objects = OBJECTS.lock();
+    let Some(record) = objects.objects.get(&object_id) else {
+        return Err(STATUS_INVALID_HANDLE);
+    };
+    if let Some(name) = &record.name {
+        return Ok(name.clone());
+    }
+    match &record.data {
+        ObjectData::Key(key) => Ok(key.path.clone()),
+        _ => Err(STATUS_OBJECT_NAME_NOT_FOUND),
     }
 }
 

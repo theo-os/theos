@@ -1,0 +1,8 @@
+rust_library(
+    name = "regf",
+    srcs = glob(["**/*.rs"]),
+    crate_root = "lib.rs",
+    crate = "regf",
+    edition = "2024",
+    visibility = ["PUBLIC"],
+)

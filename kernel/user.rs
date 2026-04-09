@@ -995,7 +995,17 @@ fn path_from_object_attributes(attributes: *const ObjectAttributes) -> Result<St
     if attrs.object_name.is_null() {
         return Err(STATUS_INVALID_PARAMETER);
     }
-    read_utf16_string(attrs.object_name)
+    let path = read_utf16_string(attrs.object_name)?;
+    if attrs.root_directory == 0 || path.starts_with('\\') {
+        return Ok(path);
+    }
+    let root_entry = resolve_handle_entry(attrs.root_directory)?;
+    let root_path = nt::object_name(root_entry.object_id)?;
+    if root_path.ends_with('\\') {
+        Ok(format!("{root_path}{path}"))
+    } else {
+        Ok(format!("{root_path}\\{path}"))
+    }
 }
 
 fn nt_path_from_vfs_path(path: &str) -> Option<String> {
@@ -1048,6 +1058,100 @@ pub fn create_file(
                 information: 1,
             };
         }
+    }
+    STATUS_SUCCESS
+}
+
+pub fn open_key(
+    out_handle: *mut Handle,
+    desired_access: AccessMask,
+    object_attributes: *const ObjectAttributes,
+) -> NtStatus {
+    if out_handle.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let nt_path = match path_from_object_attributes(object_attributes) {
+        Ok(path) => nt::canonicalize_nt_path(&path),
+        Err(status) => return status,
+    };
+    let object_id = match nt::open_key(&nt_path) {
+        Ok(id) => id,
+        Err(status) => return status,
+    };
+    let access = if desired_access == 0 {
+        nt::PROCESS_ALL_ACCESS
+    } else {
+        desired_access
+    };
+    let handle = match install_handle(object_id, access) {
+        Ok(handle) => handle,
+        Err(status) => {
+            let _ = nt::release(object_id);
+            return status;
+        }
+    };
+    let _ = nt::release(object_id);
+    unsafe { *out_handle = handle };
+    STATUS_SUCCESS
+}
+
+pub fn query_value_key(
+    handle: Handle,
+    value_name: *const UnicodeString,
+    key_value_information_class: u32,
+    key_value_information: *mut u8,
+    length: u32,
+    result_length: *mut u32,
+) -> NtStatus {
+    const KEY_VALUE_BASIC_INFORMATION_CLASS: u32 = 0;
+    const KEY_VALUE_FULL_INFORMATION_CLASS: u32 = 1;
+    const KEY_VALUE_PARTIAL_INFORMATION_CLASS: u32 = 2;
+
+    #[repr(C)]
+    struct KeyValuePartialInformationHeader {
+        title_index: u32,
+        type_: u32,
+        data_length: u32,
+    }
+
+    let _ = KEY_VALUE_BASIC_INFORMATION_CLASS;
+    let _ = KEY_VALUE_FULL_INFORMATION_CLASS;
+    if key_value_information_class != KEY_VALUE_PARTIAL_INFORMATION_CLASS {
+        return STATUS_NOT_SUPPORTED;
+    }
+    if value_name.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let value_name = match read_utf16_string(value_name) {
+        Ok(name) => name,
+        Err(status) => return status,
+    };
+    let entry = match resolve_handle_entry(handle) {
+        Ok(entry) => entry,
+        Err(status) => return status,
+    };
+    let (value_type, data) = match nt::query_key_value(entry.object_id, &value_name) {
+        Ok(value) => value,
+        Err(status) => return status,
+    };
+    let header_len = core::mem::size_of::<KeyValuePartialInformationHeader>();
+    let needed = header_len + data.len();
+    if !result_length.is_null() {
+        unsafe { *result_length = needed as u32 };
+    }
+    if key_value_information.is_null() || (length as usize) < needed {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    unsafe {
+        let header = key_value_information as *mut KeyValuePartialInformationHeader;
+        (*header).title_index = 0;
+        (*header).type_ = value_type;
+        (*header).data_length = data.len() as u32;
+        core::ptr::copy_nonoverlapping(
+            data.as_ptr(),
+            key_value_information.add(header_len),
+            data.len(),
+        );
     }
     STATUS_SUCCESS
 }
