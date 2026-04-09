@@ -300,7 +300,7 @@ extern "sysv64" fn syscall_dispatch(frame: *mut SyscallFrame) -> usize {
             frame.r9 as u32,
             stack_arg(frame, 0) != 0,
         ) as usize,
-        73 => user::query_information_file(
+        73 => user::query_volume_information_file(
             frame.r10,
             frame.rdx as *mut nt::IoStatusBlock,
             frame.r8 as *mut u8,
@@ -332,6 +332,30 @@ extern "sysv64" fn syscall_dispatch(frame: *mut SyscallFrame) -> usize {
         ) as usize,
         91 => user::query_system_time(frame.r10 as *mut i64) as usize,
         228 => user::display_string(frame.r10 as *const nt::UnicodeString) as usize,
+        88 => user::open_directory_object(
+            frame.r10 as *mut usize,
+            frame.rdx as u32,
+            frame.r8 as *const nt::ObjectAttributes,
+        ) as usize,
+        312 => user::open_symbolic_link_object(
+            frame.r10 as *mut usize,
+            frame.rdx as u32,
+            frame.r8 as *const nt::ObjectAttributes,
+        ) as usize,
+        334 => user::query_directory_object(
+            frame.r10,
+            frame.rdx as *mut u8,
+            frame.r8 as u32,
+            frame.r9 != 0,
+            stack_arg(frame, 0) != 0,
+            stack_arg(frame, 1) as *mut u32,
+            stack_arg(frame, 2) as *mut u32,
+        ) as usize,
+        363 => user::query_symbolic_link_object(
+            frame.r10,
+            frame.rdx as *mut nt::UnicodeString,
+            frame.r8 as *mut u32,
+        ) as usize,
         nt::SYSCALL_NT_CLOSE => user::close_handle(frame.a0) as usize,
         nt::SYSCALL_NT_QUERY_INFORMATION_PROCESS => user::query_information_process(
             frame.a0,

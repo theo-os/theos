@@ -29,6 +29,7 @@ pub const STATUS_END_OF_FILE: NtStatus = 0xC000_0011u32 as i32;
 pub const STATUS_UNSUCCESSFUL: NtStatus = 0xC000_0001u32 as i32;
 pub const STATUS_PENDING: NtStatus = 0x0000_0103u32 as i32;
 pub const STATUS_TIMEOUT: NtStatus = 0x0000_0102u32 as i32;
+pub const STATUS_NO_MORE_ENTRIES: NtStatus = 0x8000_001Au32 as i32;
 pub const STATUS_IMAGE_MACHINE_TYPE_MISMATCH: NtStatus = 0x4000_002Eu32 as i32;
 pub const STATUS_INVALID_IMAGE_FORMAT: NtStatus = 0xC000_007Bu32 as i32;
 pub const STATUS_NOT_SUPPORTED: NtStatus = 0xC000_00BBu32 as i32;
@@ -82,6 +83,12 @@ pub const FILE_STANDARD_INFORMATION_CLASS: u32 = 5;
 pub const FILE_POSITION_INFORMATION_CLASS: u32 = 14;
 pub const FILE_NAME_INFORMATION_CLASS: u32 = 9;
 pub const MEMORY_BASIC_INFORMATION_CLASS: u32 = 0;
+pub const FILE_FS_SIZE_INFORMATION_CLASS: u32 = 3;
+pub const FILE_FS_DEVICE_INFORMATION_CLASS: u32 = 4;
+pub const FILE_FS_ATTRIBUTE_INFORMATION_CLASS: u32 = 5;
+pub const FILE_DEVICE_DISK: u32 = 0x00000007;
+pub const FILE_CASE_SENSITIVE_SEARCH: u32 = 0x00000001;
+pub const FILE_CASE_PRESERVED_NAMES: u32 = 0x00000002;
 
 pub const EVENT_TYPE_NOTIFICATION: u32 = 0;
 pub const EVENT_TYPE_SYNCHRONIZATION: u32 = 1;
@@ -749,6 +756,128 @@ pub fn open_section(name: &str) -> Result<u32, NtStatus> {
     }
 
     Err(STATUS_OBJECT_NAME_NOT_FOUND)
+}
+
+pub fn open_directory(name: &str) -> Result<u32, NtStatus> {
+    init_namespace();
+    let canonical = canonicalize_nt_path(name);
+    let mut objects = OBJECTS.lock();
+    let Some(id) = objects.named.get(&canonical).copied() else {
+        return Err(STATUS_OBJECT_NAME_NOT_FOUND);
+    };
+    let Some(record) = objects.objects.get_mut(&id) else {
+        return Err(STATUS_OBJECT_NAME_NOT_FOUND);
+    };
+    if record.object_type != ObjectType::Directory {
+        return Err(STATUS_OBJECT_TYPE_MISMATCH);
+    }
+    record.refs = record.refs.saturating_add(1);
+    Ok(id)
+}
+
+pub fn open_symbolic_link(name: &str) -> Result<u32, NtStatus> {
+    init_namespace();
+    let canonical = canonicalize_nt_path(name);
+    let mut objects = OBJECTS.lock();
+    let Some(id) = objects.named.get(&canonical).copied() else {
+        return Err(STATUS_OBJECT_NAME_NOT_FOUND);
+    };
+    let Some(record) = objects.objects.get_mut(&id) else {
+        return Err(STATUS_OBJECT_NAME_NOT_FOUND);
+    };
+    if record.object_type != ObjectType::SymbolicLink {
+        return Err(STATUS_OBJECT_TYPE_MISMATCH);
+    }
+    record.refs = record.refs.saturating_add(1);
+    Ok(id)
+}
+
+pub fn query_symbolic_link_target(object_id: u32) -> Result<String, NtStatus> {
+    let objects = OBJECTS.lock();
+    let Some(record) = objects.objects.get(&object_id) else {
+        return Err(STATUS_INVALID_HANDLE);
+    };
+    match &record.data {
+        ObjectData::SymbolicLink { target } => Ok(target.clone()),
+        _ => Err(STATUS_OBJECT_TYPE_MISMATCH),
+    }
+}
+
+fn object_type_name(kind: ObjectType) -> &'static str {
+    match kind {
+        ObjectType::Directory => "Directory",
+        ObjectType::SymbolicLink => "SymbolicLink",
+        ObjectType::File => "File",
+        ObjectType::Key => "Key",
+        ObjectType::Section => "Section",
+        ObjectType::Process => "Process",
+        ObjectType::Thread => "Thread",
+        ObjectType::Event => "Event",
+    }
+}
+
+pub fn query_directory_entries(object_id: u32) -> Result<Vec<(String, String)>, NtStatus> {
+    let objects = OBJECTS.lock();
+    let Some(record) = objects.objects.get(&object_id) else {
+        return Err(STATUS_INVALID_HANDLE);
+    };
+    if record.object_type != ObjectType::Directory {
+        return Err(STATUS_OBJECT_TYPE_MISMATCH);
+    }
+    let Some(dir_path) = record.name.as_ref() else {
+        return Err(STATUS_OBJECT_NAME_NOT_FOUND);
+    };
+
+    let mut entries: BTreeMap<String, String> = BTreeMap::new();
+    if dir_path == "\\" {
+        for (name, child_id) in &objects.named {
+            if name == "\\" {
+                continue;
+            }
+            let Some(rest) = name.strip_prefix('\\') else {
+                continue;
+            };
+            if rest.is_empty() {
+                continue;
+            }
+            let child = rest.split('\\').next().unwrap_or("");
+            if child.is_empty() {
+                continue;
+            }
+            let full = format!("\\{}", child);
+            let Some(child_record) = objects.objects.get(child_id) else {
+                continue;
+            };
+            entries.insert(
+                child.to_string(),
+                object_type_name(child_record.object_type).to_string(),
+            );
+            let _ = full;
+        }
+    } else {
+        let prefix = format!("{dir_path}\\");
+        for (name, child_id) in &objects.named {
+            if !name.starts_with(&prefix) {
+                continue;
+            }
+            let rest = &name[prefix.len()..];
+            if rest.is_empty() {
+                continue;
+            }
+            let child = rest.split('\\').next().unwrap_or("");
+            if child.is_empty() {
+                continue;
+            }
+            let Some(child_record) = objects.objects.get(child_id) else {
+                continue;
+            };
+            entries.insert(
+                child.to_string(),
+                object_type_name(child_record.object_type).to_string(),
+            );
+        }
+    }
+    Ok(entries.into_iter().collect())
 }
 
 pub fn create_process(pid: u32) -> u32 {

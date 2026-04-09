@@ -9,7 +9,8 @@ use crate::nt::{
     STATUS_CONFLICTING_ADDRESSES, STATUS_END_OF_FILE, STATUS_INFO_LENGTH_MISMATCH,
     STATUS_INVALID_HANDLE, STATUS_INVALID_IMAGE_FORMAT, STATUS_INVALID_PARAMETER,
     STATUS_NOT_IMPLEMENTED, STATUS_NOT_SUPPORTED, STATUS_NO_MEMORY, STATUS_OBJECT_NAME_NOT_FOUND,
-    STATUS_PENDING, STATUS_SUCCESS, STATUS_TIMEOUT, STATUS_UNSUCCESSFUL,
+    STATUS_OBJECT_TYPE_MISMATCH, STATUS_PENDING, STATUS_SUCCESS, STATUS_TIMEOUT,
+    STATUS_UNSUCCESSFUL,
 };
 use crate::vfs;
 use crate::{allocator, gdt, kdebug, println, process, smp::MAX_CPUS};
@@ -1095,6 +1096,194 @@ pub fn open_key(
     STATUS_SUCCESS
 }
 
+pub fn open_directory_object(
+    out_handle: *mut Handle,
+    desired_access: AccessMask,
+    object_attributes: *const ObjectAttributes,
+) -> NtStatus {
+    if out_handle.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let nt_path = match path_from_object_attributes(object_attributes) {
+        Ok(path) => nt::canonicalize_nt_path(&path),
+        Err(status) => return status,
+    };
+    let object_id = match nt::open_directory(&nt_path) {
+        Ok(id) => id,
+        Err(status) => return status,
+    };
+    let access = if desired_access == 0 {
+        nt::PROCESS_ALL_ACCESS
+    } else {
+        desired_access
+    };
+    let handle = match install_handle(object_id, access) {
+        Ok(handle) => handle,
+        Err(status) => {
+            let _ = nt::release(object_id);
+            return status;
+        }
+    };
+    let _ = nt::release(object_id);
+    unsafe { *out_handle = handle };
+    STATUS_SUCCESS
+}
+
+pub fn open_symbolic_link_object(
+    out_handle: *mut Handle,
+    desired_access: AccessMask,
+    object_attributes: *const ObjectAttributes,
+) -> NtStatus {
+    if out_handle.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let nt_path = match path_from_object_attributes(object_attributes) {
+        Ok(path) => nt::canonicalize_nt_path(&path),
+        Err(status) => return status,
+    };
+    let object_id = match nt::open_symbolic_link(&nt_path) {
+        Ok(id) => id,
+        Err(status) => return status,
+    };
+    let access = if desired_access == 0 {
+        nt::PROCESS_ALL_ACCESS
+    } else {
+        desired_access
+    };
+    let handle = match install_handle(object_id, access) {
+        Ok(handle) => handle,
+        Err(status) => {
+            let _ = nt::release(object_id);
+            return status;
+        }
+    };
+    let _ = nt::release(object_id);
+    unsafe { *out_handle = handle };
+    STATUS_SUCCESS
+}
+
+pub fn query_symbolic_link_object(
+    handle: Handle,
+    target_name: *mut UnicodeString,
+    return_length: *mut u32,
+) -> NtStatus {
+    if target_name.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let entry = match resolve_handle_entry(handle) {
+        Ok(entry) => entry,
+        Err(status) => return status,
+    };
+    let target = match nt::query_symbolic_link_target(entry.object_id) {
+        Ok(target) => target,
+        Err(status) => return status,
+    };
+    let utf16: Vec<u16> = target.encode_utf16().collect();
+    let bytes_len = (utf16.len() * 2) as u32;
+    if !return_length.is_null() {
+        unsafe { *return_length = bytes_len };
+    }
+    let out = unsafe { &mut *target_name };
+    if out.buffer.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if u32::from(out.maximum_length) < bytes_len {
+        out.length = 0;
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(utf16.as_ptr(), out.buffer as *mut u16, utf16.len());
+    }
+    out.length = bytes_len as u16;
+    STATUS_SUCCESS
+}
+
+pub fn query_directory_object(
+    handle: Handle,
+    buffer: *mut u8,
+    length: u32,
+    _return_single_entry: bool,
+    restart_scan: bool,
+    context: *mut u32,
+    return_length: *mut u32,
+) -> NtStatus {
+    #[repr(C)]
+    struct ObjectDirectoryInformation {
+        name: UnicodeString,
+        type_name: UnicodeString,
+    }
+
+    if buffer.is_null() || context.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let entry = match resolve_handle_entry(handle) {
+        Ok(entry) => entry,
+        Err(status) => return status,
+    };
+    let entries = match nt::query_directory_entries(entry.object_id) {
+        Ok(entries) => entries,
+        Err(status) => return status,
+    };
+    if restart_scan {
+        unsafe {
+            *context = 0;
+        }
+    }
+    let index = unsafe { *context as usize };
+    if index >= entries.len() {
+        if !return_length.is_null() {
+            unsafe { *return_length = 0 };
+        }
+        return nt::STATUS_NO_MORE_ENTRIES;
+    }
+
+    let (name, kind) = &entries[index];
+    let name_utf16: Vec<u16> = name.encode_utf16().collect();
+    let kind_utf16: Vec<u16> = kind.encode_utf16().collect();
+    let header_len = core::mem::size_of::<ObjectDirectoryInformation>();
+    let names_len = (name_utf16.len() + 1) * 2 + (kind_utf16.len() + 1) * 2;
+    let needed = header_len + names_len;
+    if !return_length.is_null() {
+        unsafe { *return_length = needed as u32 };
+    }
+    if (length as usize) < needed {
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+
+    let name_off = header_len;
+    let kind_off = header_len + (name_utf16.len() + 1) * 2;
+    let base = buffer as usize;
+    let info = ObjectDirectoryInformation {
+        name: UnicodeString {
+            length: (name_utf16.len() * 2) as u16,
+            maximum_length: ((name_utf16.len() + 1) * 2) as u16,
+            buffer: (base + name_off) as *const u16,
+        },
+        type_name: UnicodeString {
+            length: (kind_utf16.len() * 2) as u16,
+            maximum_length: ((kind_utf16.len() + 1) * 2) as u16,
+            buffer: (base + kind_off) as *const u16,
+        },
+    };
+    unsafe {
+        *(buffer as *mut ObjectDirectoryInformation) = info;
+        core::ptr::copy_nonoverlapping(
+            name_utf16.as_ptr(),
+            (buffer.add(name_off)) as *mut u16,
+            name_utf16.len(),
+        );
+        *((buffer.add(name_off) as *mut u16).add(name_utf16.len())) = 0;
+        core::ptr::copy_nonoverlapping(
+            kind_utf16.as_ptr(),
+            (buffer.add(kind_off)) as *mut u16,
+            kind_utf16.len(),
+        );
+        *((buffer.add(kind_off) as *mut u16).add(kind_utf16.len())) = 0;
+        *context = (index + 1) as u32;
+    }
+    STATUS_SUCCESS
+}
+
 pub fn query_value_key(
     handle: Handle,
     value_name: *const UnicodeString,
@@ -1154,6 +1343,113 @@ pub fn query_value_key(
         );
     }
     STATUS_SUCCESS
+}
+
+pub fn query_volume_information_file(
+    handle: Handle,
+    io_status: *mut IoStatusBlock,
+    fs_information: *mut u8,
+    length: u32,
+    info_class: u32,
+) -> NtStatus {
+    #[repr(C)]
+    struct FileFsSizeInformation {
+        total_allocation_units: i64,
+        available_allocation_units: i64,
+        sectors_per_allocation_unit: u32,
+        bytes_per_sector: u32,
+    }
+
+    #[repr(C)]
+    struct FileFsDeviceInformation {
+        device_type: u32,
+        characteristics: u32,
+    }
+
+    #[repr(C)]
+    struct FileFsAttributeInformationHead {
+        file_system_attributes: u32,
+        maximum_component_name_length: i32,
+        file_system_name_length: u32,
+    }
+
+    if fs_information.is_null() {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let entry = match resolve_handle_entry(handle) {
+        Ok(entry) => entry,
+        Err(status) => return status,
+    };
+    if nt::object_type(entry.object_id) != Ok(nt::ObjectType::File) {
+        return STATUS_OBJECT_TYPE_MISMATCH;
+    }
+
+    let status = match info_class {
+        nt::FILE_FS_SIZE_INFORMATION_CLASS => {
+            let required = core::mem::size_of::<FileFsSizeInformation>() as u32;
+            if length < required {
+                STATUS_INFO_LENGTH_MISMATCH
+            } else {
+                unsafe {
+                    *(fs_information as *mut FileFsSizeInformation) = FileFsSizeInformation {
+                        total_allocation_units: 512 * 1024,
+                        available_allocation_units: 384 * 1024,
+                        sectors_per_allocation_unit: 8,
+                        bytes_per_sector: 512,
+                    };
+                }
+                STATUS_SUCCESS
+            }
+        }
+        nt::FILE_FS_DEVICE_INFORMATION_CLASS => {
+            let required = core::mem::size_of::<FileFsDeviceInformation>() as u32;
+            if length < required {
+                STATUS_INFO_LENGTH_MISMATCH
+            } else {
+                unsafe {
+                    *(fs_information as *mut FileFsDeviceInformation) = FileFsDeviceInformation {
+                        device_type: nt::FILE_DEVICE_DISK,
+                        characteristics: 0,
+                    };
+                }
+                STATUS_SUCCESS
+            }
+        }
+        nt::FILE_FS_ATTRIBUTE_INFORMATION_CLASS => {
+            let fs_name: Vec<u16> = "CRABFS".encode_utf16().collect();
+            let head = core::mem::size_of::<FileFsAttributeInformationHead>();
+            let required = head + fs_name.len() * 2;
+            if (length as usize) < required {
+                STATUS_INFO_LENGTH_MISMATCH
+            } else {
+                unsafe {
+                    *(fs_information as *mut FileFsAttributeInformationHead) =
+                        FileFsAttributeInformationHead {
+                            file_system_attributes: nt::FILE_CASE_SENSITIVE_SEARCH
+                                | nt::FILE_CASE_PRESERVED_NAMES,
+                            maximum_component_name_length: 255,
+                            file_system_name_length: (fs_name.len() * 2) as u32,
+                        };
+                    core::ptr::copy_nonoverlapping(
+                        fs_name.as_ptr(),
+                        fs_information.add(head) as *mut u16,
+                        fs_name.len(),
+                    );
+                }
+                STATUS_SUCCESS
+            }
+        }
+        _ => STATUS_NOT_SUPPORTED,
+    };
+    if !io_status.is_null() {
+        unsafe {
+            *io_status = IoStatusBlock {
+                status,
+                information: usize::try_from(length).unwrap_or(0),
+            };
+        }
+    }
+    status
 }
 
 pub fn read_file(
