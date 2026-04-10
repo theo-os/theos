@@ -8,7 +8,7 @@ rust_binary(
 
 http_file(
     name = "ovmf_firmware",
-    urls = ["https://github.com/retrage/edk2-nightly/raw/refs/heads/master/bin/DEBUGX64_OVMF.fd"],
+    urls = ["https://github.com/retrage/edk2-nightly/raw/8b82cef2060fb27e07011d32911616084c8742ed/bin/DEBUGX64_OVMF.fd"],
     sha256 = "727056000a2b1e6adfa36662fb570a27912ff961dbd7aedb8ad59b724567867a",
 )
 
