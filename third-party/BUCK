@@ -4,6 +4,13 @@ load("@prelude//rust:cargo_buildscript.bzl", "buildscript_run")
 load("@prelude//rust:cargo_package.bzl", "cargo")
 
 git_fetch(
+    name = "graviola-bece9dbd487c3cd7.git",
+    repo = "https://github.com/ctz/graviola",
+    rev = "9685008b7bb0def07828a00e1baca17c710a923e",
+    visibility = [],
+)
+
+git_fetch(
     name = "lz4_flex-7acf2f6ecb43b574.git",
     repo = "https://github.com/PSeitz/lz4_flex",
     rev = "268ce321f40d4573cb8311c80c3668407b1589ce",
@@ -126,6 +133,12 @@ http_archive(
     strip_prefix = "atomic-waker-1.1.2",
     urls = ["https://static.crates.io/crates/atomic-waker/1.1.2/download"],
     visibility = [],
+)
+
+alias(
+    name = "base64",
+    actual = ":base64-0.22",
+    visibility = ["PUBLIC"],
 )
 
 cargo.rust_library(
@@ -1574,6 +1587,44 @@ http_archive(
     visibility = [],
 )
 
+cargo.rust_library(
+    name = "getrandom-0.3",
+    srcs = [":getrandom-0.3.4.crate"],
+    crate = "getrandom",
+    crate_root = "getrandom-0.3.4.crate/src/lib.rs",
+    edition = "2021",
+    platform = {
+        "linux-arm64": dict(
+            deps = [":libc-0.2"],
+        ),
+        "linux-x86_64": dict(
+            deps = [":libc-0.2"],
+        ),
+        "macos-arm64": dict(
+            deps = [":libc-0.2"],
+        ),
+        "macos-x86_64": dict(
+            deps = [":libc-0.2"],
+        ),
+        "windows-gnu": dict(
+            features = ["std"],
+        ),
+        "windows-msvc": dict(
+            features = ["std"],
+        ),
+    },
+    visibility = [],
+    deps = [":cfg-if-1"],
+)
+
+http_archive(
+    name = "getrandom-0.3.4.crate",
+    sha256 = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd",
+    strip_prefix = "getrandom-0.3.4",
+    urls = ["https://static.crates.io/crates/getrandom/0.3.4/download"],
+    visibility = [],
+)
+
 alias(
     name = "getrandom",
     actual = ":getrandom-0.4",
@@ -1651,6 +1702,20 @@ http_archive(
 )
 
 cargo.rust_library(
+    name = "graviola-0.3",
+    srcs = [":graviola-bece9dbd487c3cd7.git"],
+    crate = "graviola",
+    crate_root = "graviola-bece9dbd487c3cd7/graviola/src/lib.rs",
+    edition = "2024",
+    features = ["default"],
+    visibility = [],
+    deps = [
+        ":cfg-if-1",
+        ":getrandom-0.3",
+    ],
+)
+
+cargo.rust_library(
     name = "h2-0.4",
     srcs = [":h2-0.4.13.crate"],
     crate = "h2",
@@ -1713,6 +1778,114 @@ http_archive(
     sha256 = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100",
     strip_prefix = "hashbrown-0.16.1",
     urls = ["https://static.crates.io/crates/hashbrown/0.16.1/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "hax-lib-0.3",
+    srcs = [":hax-lib-0.3.6.crate"],
+    crate = "hax_lib",
+    crate_root = "hax-lib-0.3.6.crate/src/lib.rs",
+    edition = "2021",
+    env = {
+        "CARGO_BIN_NAME": "hax_lib",
+        "CARGO_CRATE_NAME": "hax_lib",
+        "CARGO_MANIFEST_DIR": "hax-lib-0.3.6.crate",
+        "CARGO_PKG_AUTHORS": "hax Authors",
+        "CARGO_PKG_DESCRIPTION": "Hax-specific helpers for Rust programs",
+        "CARGO_PKG_NAME": "hax-lib",
+        "CARGO_PKG_REPOSITORY": "https://github.com/hacspec/hax",
+        "CARGO_PKG_VERSION": "0.3.6",
+        "CARGO_PKG_VERSION_MAJOR": "0",
+        "CARGO_PKG_VERSION_MINOR": "3",
+        "CARGO_PKG_VERSION_PATCH": "6",
+        "CARGO_PKG_VERSION_PRE": "",
+        "OUT_DIR": "$(location :hax-lib-0.3-build-script-run[out_dir])",
+    },
+    features = [
+        "default",
+        "macros",
+    ],
+    rustc_flags = ["@$(location :hax-lib-0.3-build-script-run[rustc_flags])"],
+    visibility = [],
+    deps = [":hax-lib-macros-0.3"],
+)
+
+cargo.rust_binary(
+    name = "hax-lib-0.3-build-script-build",
+    srcs = [":hax-lib-0.3.6.crate"],
+    crate = "build_script_build",
+    crate_root = "hax-lib-0.3.6.crate/build.rs",
+    edition = "2021",
+    env = {
+        "CARGO_BIN_NAME": "build-script-build",
+        "CARGO_CRATE_NAME": "build_script_build",
+        "CARGO_MANIFEST_DIR": "hax-lib-0.3.6.crate",
+        "CARGO_PKG_AUTHORS": "hax Authors",
+        "CARGO_PKG_DESCRIPTION": "Hax-specific helpers for Rust programs",
+        "CARGO_PKG_NAME": "hax-lib",
+        "CARGO_PKG_REPOSITORY": "https://github.com/hacspec/hax",
+        "CARGO_PKG_VERSION": "0.3.6",
+        "CARGO_PKG_VERSION_MAJOR": "0",
+        "CARGO_PKG_VERSION_MINOR": "3",
+        "CARGO_PKG_VERSION_PATCH": "6",
+        "CARGO_PKG_VERSION_PRE": "",
+    },
+    features = [
+        "default",
+        "macros",
+    ],
+    visibility = [],
+)
+
+buildscript_run(
+    name = "hax-lib-0.3-build-script-run",
+    package_name = "hax-lib",
+    buildscript_rule = ":hax-lib-0.3-build-script-build",
+    env = {
+        "CARGO_PKG_AUTHORS": "hax Authors",
+        "CARGO_PKG_DESCRIPTION": "Hax-specific helpers for Rust programs",
+        "CARGO_PKG_REPOSITORY": "https://github.com/hacspec/hax",
+        "CARGO_PKG_VERSION_MAJOR": "0",
+        "CARGO_PKG_VERSION_MINOR": "3",
+        "CARGO_PKG_VERSION_PATCH": "6",
+        "CARGO_PKG_VERSION_PRE": "",
+    },
+    features = [
+        "default",
+        "macros",
+    ],
+    version = "0.3.6",
+)
+
+http_archive(
+    name = "hax-lib-0.3.6.crate",
+    sha256 = "543f93241d32b3f00569201bfce9d7a93c92c6421b23c77864ac929dc947b9fc",
+    strip_prefix = "hax-lib-0.3.6",
+    urls = ["https://static.crates.io/crates/hax-lib/0.3.6/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "hax-lib-macros-0.3",
+    srcs = [":hax-lib-macros-0.3.6.crate"],
+    crate = "hax_lib_macros",
+    crate_root = "hax-lib-macros-0.3.6.crate/src/lib.rs",
+    edition = "2021",
+    proc_macro = True,
+    visibility = [],
+    deps = [
+        ":proc-macro2-1",
+        ":quote-1",
+        ":syn-2",
+    ],
+)
+
+http_archive(
+    name = "hax-lib-macros-0.3.6.crate",
+    sha256 = "f8755751e760b11021765bb04cb4a6c4e24742688d9f3aa14c2079638f537b0f",
+    strip_prefix = "hax-lib-macros-0.3.6",
+    urls = ["https://static.crates.io/crates/hax-lib-macros/0.3.6/download"],
     visibility = [],
 )
 
@@ -2422,6 +2595,133 @@ http_archive(
     strip_prefix = "libc-0.2.184",
     urls = ["https://static.crates.io/crates/libc/0.2.184/download"],
     visibility = [],
+)
+
+http_archive(
+    name = "libcrux-intrinsics-0.0.6.crate",
+    sha256 = "b1b5db005ff8001e026b73a6842ee81bbef8ec5ff0e1915a67ae65fd2a9fafa5",
+    strip_prefix = "libcrux-intrinsics-0.0.6",
+    urls = ["https://static.crates.io/crates/libcrux-intrinsics/0.0.6/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "libcrux-intrinsics-0.0.6",
+    srcs = [":libcrux-intrinsics-0.0.6.crate"],
+    crate = "libcrux_intrinsics",
+    crate_root = "libcrux-intrinsics-0.0.6.crate/src/lib.rs",
+    edition = "2021",
+    visibility = [],
+    deps = [":hax-lib-0.3"],
+)
+
+http_archive(
+    name = "libcrux-ml-kem-0.0.8.crate",
+    sha256 = "a14ab3e477de9df6ee1273a114018ff62c4996ca9220070c4e5cb1743f94a67d",
+    strip_prefix = "libcrux-ml-kem-0.0.8",
+    urls = ["https://static.crates.io/crates/libcrux-ml-kem/0.0.8/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "libcrux-ml-kem-0.0.8",
+    srcs = [":libcrux-ml-kem-0.0.8.crate"],
+    crate = "libcrux_ml_kem",
+    crate_root = "libcrux-ml-kem-0.0.8.crate/src/lib.rs",
+    edition = "2021",
+    features = [
+        "alloc",
+        "mlkem768",
+    ],
+    visibility = [],
+    deps = [
+        ":hax-lib-0.3",
+        ":libcrux-intrinsics-0.0.6",
+        ":libcrux-platform-0.0.3",
+        ":libcrux-secrets-0.0.5",
+        ":libcrux-sha3-0.0.8",
+        ":libcrux-traits-0.0.6",
+    ],
+)
+
+http_archive(
+    name = "libcrux-platform-0.0.3.crate",
+    sha256 = "1d9e21d7ed31a92ac539bd69a8c970b183ee883872d2d19ce27036e24cb8ecc4",
+    strip_prefix = "libcrux-platform-0.0.3",
+    urls = ["https://static.crates.io/crates/libcrux-platform/0.0.3/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "libcrux-platform-0.0.3",
+    srcs = [":libcrux-platform-0.0.3.crate"],
+    crate = "libcrux_platform",
+    crate_root = "libcrux-platform-0.0.3.crate/src/lib.rs",
+    edition = "2021",
+    visibility = [],
+    deps = [":libc-0.2"],
+)
+
+http_archive(
+    name = "libcrux-secrets-0.0.5.crate",
+    sha256 = "1ce650f3041b44ba40d4263852347d007cd2cd9d1cc856a6f6c8b2e10c3fd40b",
+    strip_prefix = "libcrux-secrets-0.0.5",
+    urls = ["https://static.crates.io/crates/libcrux-secrets/0.0.5/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "libcrux-secrets-0.0.5",
+    srcs = [":libcrux-secrets-0.0.5.crate"],
+    crate = "libcrux_secrets",
+    crate_root = "libcrux-secrets-0.0.5.crate/src/lib.rs",
+    edition = "2021",
+    visibility = [],
+    deps = [":hax-lib-0.3"],
+)
+
+http_archive(
+    name = "libcrux-sha3-0.0.8.crate",
+    sha256 = "b1ae0b7d0e1cc4793a609fd0ff2ca3b3a3fabae523770c619a3d4bc86417b0d7",
+    strip_prefix = "libcrux-sha3-0.0.8",
+    urls = ["https://static.crates.io/crates/libcrux-sha3/0.0.8/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "libcrux-sha3-0.0.8",
+    srcs = [":libcrux-sha3-0.0.8.crate"],
+    crate = "libcrux_sha3",
+    crate_root = "libcrux-sha3-0.0.8.crate/src/lib.rs",
+    edition = "2021",
+    visibility = [],
+    deps = [
+        ":hax-lib-0.3",
+        ":libcrux-intrinsics-0.0.6",
+        ":libcrux-platform-0.0.3",
+        ":libcrux-traits-0.0.6",
+    ],
+)
+
+http_archive(
+    name = "libcrux-traits-0.0.6.crate",
+    sha256 = "812e4fa89f3f5e34b47f928b22b1b78395a0d4ec23b1f583db635f128159d65f",
+    strip_prefix = "libcrux-traits-0.0.6",
+    urls = ["https://static.crates.io/crates/libcrux-traits/0.0.6/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "libcrux-traits-0.0.6",
+    srcs = [":libcrux-traits-0.0.6.crate"],
+    crate = "libcrux_traits",
+    crate_root = "libcrux-traits-0.0.6.crate/src/lib.rs",
+    edition = "2021",
+    visibility = [],
+    deps = [
+        ":libcrux-secrets-0.0.5",
+        ":rand-0.9",
+    ],
 )
 
 alias(
@@ -3148,6 +3448,24 @@ http_archive(
     visibility = [],
 )
 
+cargo.rust_library(
+    name = "rand-0.9",
+    srcs = [":rand-0.9.4.crate"],
+    crate = "rand",
+    crate_root = "rand-0.9.4.crate/src/lib.rs",
+    edition = "2021",
+    visibility = [],
+    deps = [":rand_core-0.9"],
+)
+
+http_archive(
+    name = "rand-0.9.4.crate",
+    sha256 = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea",
+    strip_prefix = "rand-0.9.4",
+    urls = ["https://static.crates.io/crates/rand/0.9.4/download"],
+    visibility = [],
+)
+
 alias(
     name = "rand_chacha",
     actual = ":rand_chacha-0.10",
@@ -3172,6 +3490,23 @@ http_archive(
     sha256 = "3e6af7f3e25ded52c41df4e0b1af2d047e45896c2f3281792ed68a1c243daedb",
     strip_prefix = "rand_chacha-0.10.0",
     urls = ["https://static.crates.io/crates/rand_chacha/0.10.0/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "rand_core-0.9",
+    srcs = [":rand_core-0.9.5.crate"],
+    crate = "rand_core",
+    crate_root = "rand_core-0.9.5.crate/src/lib.rs",
+    edition = "2021",
+    visibility = [],
+)
+
+http_archive(
+    name = "rand_core-0.9.5.crate",
+    sha256 = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c",
+    strip_prefix = "rand_core-0.9.5",
+    urls = ["https://static.crates.io/crates/rand_core/0.9.5/download"],
     visibility = [],
 )
 
@@ -3463,6 +3798,30 @@ http_archive(
     strip_prefix = "rustls-0.23.37",
     urls = ["https://static.crates.io/crates/rustls/0.23.37/download"],
     visibility = [],
+)
+
+alias(
+    name = "rustls-graviola",
+    actual = ":rustls-graviola-0.3",
+    visibility = ["PUBLIC"],
+)
+
+cargo.rust_library(
+    name = "rustls-graviola-0.3",
+    srcs = [":graviola-bece9dbd487c3cd7.git"],
+    crate = "rustls_graviola",
+    crate_root = "graviola-bece9dbd487c3cd7/rustls-graviola/src/lib.rs",
+    edition = "2024",
+    features = [
+        "default",
+        "libcrux-ml-kem",
+    ],
+    visibility = [],
+    deps = [
+        ":graviola-0.3",
+        ":libcrux-ml-kem-0.0.8",
+        ":rustls-0.23",
+    ],
 )
 
 cargo.rust_library(
@@ -3851,6 +4210,35 @@ http_archive(
     visibility = [],
 )
 
+alias(
+    name = "serde_json",
+    actual = ":serde_json-1",
+    visibility = ["PUBLIC"],
+)
+
+cargo.rust_library(
+    name = "serde_json-1",
+    srcs = [":serde_json-1.0.149.crate"],
+    crate = "serde_json",
+    crate_root = "serde_json-1.0.149.crate/src/lib.rs",
+    edition = "2021",
+    visibility = [],
+    deps = [
+        ":itoa-1",
+        ":memchr-2",
+        ":serde_core-1",
+        ":zmij-1",
+    ],
+)
+
+http_archive(
+    name = "serde_json-1.0.149.crate",
+    sha256 = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86",
+    strip_prefix = "serde_json-1.0.149",
+    urls = ["https://static.crates.io/crates/serde_json/1.0.149/download"],
+    visibility = [],
+)
+
 cargo.rust_library(
     name = "serde_spanned-1",
     srcs = [":serde_spanned-1.1.1.crate"],
@@ -4189,6 +4577,7 @@ cargo.rust_library(
         "printing",
         "proc-macro",
         "visit",
+        "visit-mut",
     ],
     visibility = [],
     deps = [
@@ -5616,6 +6005,23 @@ http_archive(
     sha256 = "3be3d40e40a133f9c916ee3f9f4fa2d9d63435b5fbe1bfc6d9dae0aa0ada1513",
     strip_prefix = "zlib-rs-0.6.3",
     urls = ["https://static.crates.io/crates/zlib-rs/0.6.3/download"],
+    visibility = [],
+)
+
+cargo.rust_library(
+    name = "zmij-1",
+    srcs = [":zmij-1.0.21.crate"],
+    crate = "zmij",
+    crate_root = "zmij-1.0.21.crate/src/lib.rs",
+    edition = "2021",
+    visibility = [],
+)
+
+http_archive(
+    name = "zmij-1.0.21.crate",
+    sha256 = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa",
+    strip_prefix = "zmij-1.0.21",
+    urls = ["https://static.crates.io/crates/zmij/1.0.21/download"],
     visibility = [],
 )
 

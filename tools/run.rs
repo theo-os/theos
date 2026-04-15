@@ -9,7 +9,30 @@ const DEFAULT_WINDOWS_ISO: &str = "Win11_25H2_English_x64_v2.iso";
 const WINDOWS_ROOTFS_MANIFEST: &str = "tools/windows-rootfs.txt";
 const WINDOWS_ROOTFS_REAL_MANIFEST: &str = "tools/windows-rootfs-real.txt";
 
+#[derive(Clone, Debug)]
+enum WindowsSource {
+    Iso(PathBuf),
+    Wim(PathBuf),
+}
+
+#[derive(Clone, Debug)]
+struct UupConfig {
+    output_dir: PathBuf,
+    update_id: Option<String>,
+    revision: Option<String>,
+    build: String,
+    arch: String,
+    ring: String,
+    flight: String,
+    sku: String,
+    release_type: String,
+    branch: String,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
+    rustls_graviola::default_provider()
+        .install_default()
+        .unwrap();
     let arch = env::var("ARCH").unwrap_or_else(|_| "x86_64".to_string());
     if arch != "x86_64" {
         return Err(format!("unsupported architecture: {arch}").into());
@@ -20,9 +43,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let kernel_bin = required_env_path("BUCK_KERNEL_BIN")?;
     let mkrootfs_bin = required_env_path("BUCK_MKROOTFS_BIN")?;
     let wimunpack_bin = required_env_path("BUCK_WIMUNPACK_BIN")?;
-    let native_init_exe = required_env_path("BUCK_NATIVE_INIT_EXE")?;
-    let child_exe = required_env_path("BUCK_CHILD_EXE")?;
-    let ntdll_dll = required_env_path("BUCK_NTDLL_DLL")?;
+    let uup_fetch_bin = required_env_path("BUCK_UUP_FETCH_BIN")?;
 
     let rootfs_img = root.join("rootfs.img");
     let efi_root = root.join("efi_root");
@@ -34,7 +55,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let kernel_rootfstype = env::var("KERNEL_ROOTFSTYPE").unwrap_or_else(|_| "crabfs".to_string());
     let kernel_cmdline = env::var("KERNEL_CMDLINE").unwrap_or_default();
     let rootfs_size_mib = env::var("ROOTFS_SIZE_MIB").unwrap_or_default();
-    let rootfs_profile = env::var("ROOTFS_PROFILE").unwrap_or_else(|_| "auto".to_string());
     let qemu_mem = env::var("QEMU_MEM").unwrap_or_else(|_| "512M".to_string());
     let rootfs_staging_dir = root.join(".rootfs-staging");
     let rootfs_extract_manifest = root.join(".rootfs-extract.manifest");
@@ -44,12 +64,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     let rootfs_iso = env::var_os("ROOTFS_ISO")
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join(DEFAULT_WINDOWS_ISO));
-    let effective_profile = resolve_rootfs_profile(rootfs_profile.as_str(), &rootfs_iso)?;
-    let rootfs_manifest = rootfs_manifest_for_profile(
-        effective_profile,
-        &windows_rootfs_manifest,
-        &windows_rootfs_real_manifest,
-    );
+    let uup_config = UupConfig {
+        output_dir: root.join(".uup-cache"),
+        update_id: env::var("ROOTFS_UUP_UPDATE_ID").ok(),
+        revision: env::var("ROOTFS_UUP_REVISION").ok(),
+        build: env::var("ROOTFS_UUP_BUILD").unwrap_or_else(|_| "29565.1000".to_string()),
+        arch: env::var("ROOTFS_UUP_ARCH").unwrap_or_else(|_| "amd64".to_string()),
+        ring: env::var("ROOTFS_UUP_RING").unwrap_or_else(|_| "WIF".to_string()),
+        flight: env::var("ROOTFS_UUP_FLIGHT").unwrap_or_else(|_| "Active".to_string()),
+        sku: env::var("ROOTFS_UUP_SKU").unwrap_or_else(|_| "48".to_string()),
+        release_type: env::var("ROOTFS_UUP_TYPE").unwrap_or_else(|_| "Production".to_string()),
+        branch: env::var("ROOTFS_UUP_BRANCH").unwrap_or_else(|_| "auto".to_string()),
+    };
+    let windows_source = resolve_windows_source(&root, &rootfs_iso, &uup_fetch_bin, &uup_config)?;
+    let rootfs_manifest = Some(windows_rootfs_real_manifest.as_path());
 
     if let Some(path) = env::var_os("KERNEL_RUSTFLAGS") {
         eprintln!("warning: KERNEL_RUSTFLAGS is ignored by the Buck2 build");
@@ -57,39 +85,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let build_signature = rootfs_build_signature(
-        effective_profile,
-        &rootfs_iso,
+        windows_source.as_ref(),
         rootfs_manifest,
         rootfs_size_mib.as_str(),
         &mkrootfs_bin,
-        &native_init_exe,
-        &child_exe,
-        &ntdll_dll,
     )?;
     if rootfs_img.exists() && manifest_matches(&rootfs_build_manifest, &build_signature)? {
         eprintln!("info: reusing cached rootfs image {}", rootfs_img.display());
     } else {
         prepare_rootfs_staging(
-            effective_profile,
             &wimunpack_bin,
-            &rootfs_iso,
+            windows_source.as_ref(),
             rootfs_manifest,
             &rootfs_staging_dir,
             &rootfs_extract_manifest,
         )?;
-        match effective_profile {
-            RootfsProfile::Minimal | RootfsProfile::Windows => {
-                install_native_init_to_dir(
-                    &native_init_exe,
-                    &child_exe,
-                    &ntdll_dll,
-                    &rootfs_staging_dir,
-                )?;
-            }
-            RootfsProfile::WindowsReal => {
-                install_windows_real_init_to_dir(&rootfs_staging_dir)?;
-            }
-        }
+        install_windows_real_init_to_dir(&rootfs_staging_dir)?;
         build_rootfs_from_dir(
             &mkrootfs_bin,
             &rootfs_staging_dir,
@@ -190,97 +201,46 @@ fn resolve_rootfs_size_mib(source: &Path) -> Result<String, Box<dyn Error>> {
     Ok(size_mib.to_string())
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RootfsProfile {
-    Minimal,
-    Windows,
-    WindowsReal,
-}
-
-fn resolve_rootfs_profile(profile: &str, iso_path: &Path) -> Result<RootfsProfile, Box<dyn Error>> {
-    match profile {
-        "minimal" => Ok(RootfsProfile::Minimal),
-        "windows" => {
-            if iso_path.exists() {
-                Ok(RootfsProfile::Windows)
-            } else {
-                Err(format!(
-                    "ROOTFS_PROFILE=windows requested but ISO not found at {}",
-                    iso_path.display()
-                )
-                .into())
-            }
-        }
-        "windows-real" => {
-            if iso_path.exists() {
-                Ok(RootfsProfile::WindowsReal)
-            } else {
-                Err(format!(
-                    "ROOTFS_PROFILE=windows-real requested but ISO not found at {}",
-                    iso_path.display()
-                )
-                .into())
-            }
-        }
-        "auto" => {
-            if iso_path.exists() {
-                Ok(RootfsProfile::Windows)
-            } else {
-                Ok(RootfsProfile::Minimal)
-            }
-        }
-        other => Err(format!(
-            "unsupported ROOTFS_PROFILE={other}; expected auto, minimal, windows, or windows-real"
-        )
-        .into()),
-    }
-}
-
-fn rootfs_manifest_for_profile<'a>(
-    profile: RootfsProfile,
-    windows_manifest: &'a Path,
-    windows_real_manifest: &'a Path,
-) -> Option<&'a Path> {
-    match profile {
-        RootfsProfile::Minimal => None,
-        RootfsProfile::Windows => Some(windows_manifest),
-        RootfsProfile::WindowsReal => Some(windows_real_manifest),
+fn resolve_windows_source(
+    root: &Path,
+    iso_path: &Path,
+    uup_fetch_bin: &Path,
+    uup_config: &UupConfig,
+) -> Result<Option<WindowsSource>, Box<dyn Error>> {
+    if iso_path.exists() {
+        Ok(Some(WindowsSource::Iso(iso_path.to_path_buf())))
+    } else {
+        let wim = fetch_uup_wim(root, uup_fetch_bin, uup_config)?;
+        Ok(Some(WindowsSource::Wim(wim)))
     }
 }
 
 fn prepare_rootfs_staging(
-    profile: RootfsProfile,
     wimunpack_bin: &Path,
-    iso_path: &Path,
+    windows_source: Option<&WindowsSource>,
     windows_rootfs_manifest: Option<&Path>,
     staging: &Path,
     extract_manifest: &Path,
 ) -> Result<(), Box<dyn Error>> {
-    match profile {
-        RootfsProfile::Minimal => {
-            remove_if_exists(staging)?;
-            remove_if_exists(extract_manifest)?;
-            fs::create_dir_all(staging)?;
-            eprintln!("info: using minimal rootfs profile");
-        }
-        RootfsProfile::Windows | RootfsProfile::WindowsReal => {
-            let Some(windows_rootfs_manifest) = windows_rootfs_manifest else {
-                return Err("windows profile requires include-list manifest".into());
-            };
-            let expected_paths = read_include_manifest_paths(windows_rootfs_manifest)?;
-            let extract_signature = rootfs_extract_signature(
-                profile,
-                iso_path,
-                windows_rootfs_manifest,
-                wimunpack_bin,
-            )?;
-            if staging.exists()
-                && manifest_matches(extract_manifest, &extract_signature)?
-                && staging_contains_paths(staging, &expected_paths)
-            {
-                eprintln!("info: reusing cached Windows rootfs extraction");
-            } else {
-                remove_if_exists(staging)?;
+    let Some(windows_rootfs_manifest) = windows_rootfs_manifest else {
+        return Err("windows rootfs requires include-list manifest".into());
+    };
+    let Some(windows_source) = windows_source else {
+        return Err("windows rootfs requires a Windows source (ISO or UUP WIM)".into());
+    };
+
+    let expected_paths = read_include_manifest_paths(windows_rootfs_manifest)?;
+    let extract_signature =
+        rootfs_extract_signature(windows_source, windows_rootfs_manifest, wimunpack_bin)?;
+    if staging.exists()
+        && manifest_matches(extract_manifest, &extract_signature)?
+        && staging_contains_paths(staging, &expected_paths)
+    {
+        eprintln!("info: reusing cached Windows rootfs extraction");
+    } else {
+        remove_if_exists(staging)?;
+        match windows_source {
+            WindowsSource::Iso(iso_path) => {
                 eprintln!("info: extracting rootfs from {}", iso_path.display());
                 run_cmd(
                     Command::new(wimunpack_bin)
@@ -291,65 +251,117 @@ fn prepare_rootfs_staging(
                         .arg("--output")
                         .arg(staging),
                 )?;
-                write_manifest(extract_manifest, &extract_signature)?;
+            }
+            WindowsSource::Wim(wim_path) => {
+                eprintln!("info: extracting rootfs from {}", wim_path.display());
+                run_cmd(
+                    Command::new(wimunpack_bin)
+                        .arg("--wim")
+                        .arg(wim_path)
+                        .arg("--include-list")
+                        .arg(windows_rootfs_manifest)
+                        .arg("--output")
+                        .arg(staging),
+                )?;
             }
         }
+        write_manifest(extract_manifest, &extract_signature)?;
     }
     Ok(())
 }
 
 fn rootfs_extract_signature(
-    profile: RootfsProfile,
-    iso_path: &Path,
+    windows_source: &WindowsSource,
     windows_rootfs_manifest: &Path,
     wimunpack_bin: &Path,
 ) -> Result<String, Box<dyn Error>> {
+    let source_signature = match windows_source {
+        WindowsSource::Iso(path) => format!("iso={}", file_signature(path)?),
+        WindowsSource::Wim(path) => format!("wim={}", file_signature(path)?),
+    };
     Ok(format!(
-        "profile={}\niso={}\ninclude_list={}\nwimunpack={}\n",
-        match profile {
-            RootfsProfile::Minimal => "minimal",
-            RootfsProfile::Windows => "windows",
-            RootfsProfile::WindowsReal => "windows-real",
-        },
-        file_signature(iso_path)?,
+        "{}\ninclude_list={}\nwimunpack={}\n",
+        source_signature,
         file_signature(windows_rootfs_manifest)?,
         file_signature(wimunpack_bin)?,
     ))
 }
 
 fn rootfs_build_signature(
-    profile: RootfsProfile,
-    iso_path: &Path,
+    windows_source: Option<&WindowsSource>,
     windows_rootfs_manifest: Option<&Path>,
     rootfs_size_mib: &str,
     mkrootfs_bin: &Path,
-    native_init_exe: &Path,
-    child_exe: &Path,
-    ntdll_dll: &Path,
 ) -> Result<String, Box<dyn Error>> {
     let mut signature = String::new();
-    signature.push_str(match profile {
-        RootfsProfile::Minimal => "profile=minimal\n",
-        RootfsProfile::Windows => "profile=windows\n",
-        RootfsProfile::WindowsReal => "profile=windows-real\n",
-    });
     if let Some(manifest) = windows_rootfs_manifest {
-        signature.push_str(&format!("iso={}\n", file_signature(iso_path)?));
+        if let Some(source) = windows_source {
+            match source {
+                WindowsSource::Iso(path) => {
+                    signature.push_str(&format!("iso={}\n", file_signature(path)?));
+                }
+                WindowsSource::Wim(path) => {
+                    signature.push_str(&format!("wim={}\n", file_signature(path)?));
+                }
+            }
+        }
         signature.push_str(&format!("include_list={}\n", file_signature(manifest)?));
     }
     signature.push_str(&format!("rootfs_size_mib={rootfs_size_mib}\n"));
     signature.push_str(&format!("mkrootfs={}\n", file_signature(mkrootfs_bin)?));
-    match profile {
-        RootfsProfile::Minimal | RootfsProfile::Windows => {
-            signature.push_str(&format!("init={}\n", file_signature(native_init_exe)?));
-            signature.push_str(&format!("child={}\n", file_signature(child_exe)?));
-            signature.push_str(&format!("ntdll={}\n", file_signature(ntdll_dll)?));
-        }
-        RootfsProfile::WindowsReal => {
-            signature.push_str("overlay=windows-real\n");
-        }
-    }
+    signature.push_str("overlay=windows-real\n");
     Ok(signature)
+}
+
+fn fetch_uup_wim(
+    root: &Path,
+    uup_fetch_bin: &Path,
+    config: &UupConfig,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let mut cmd = Command::new(uup_fetch_bin);
+    cmd.current_dir(root)
+        .arg("--output-dir")
+        .arg(&config.output_dir)
+        .arg("--build")
+        .arg(&config.build)
+        .arg("--arch")
+        .arg(&config.arch)
+        .arg("--ring")
+        .arg(&config.ring)
+        .arg("--flight")
+        .arg(&config.flight)
+        .arg("--sku")
+        .arg(&config.sku)
+        .arg("--release-type")
+        .arg(&config.release_type)
+        .arg("--branch")
+        .arg(&config.branch);
+
+    if let Some(update_id) = config.update_id.as_ref() {
+        cmd.arg("--update-id").arg(update_id);
+    }
+    if let Some(revision) = config.revision.as_ref() {
+        cmd.arg("--revision").arg(revision);
+    }
+
+    eprintln!("info: fetching Windows image from Microsoft UUP endpoints");
+    let output = run_cmd(&mut cmd)?;
+    let path = output
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .map(PathBuf::from)
+        .ok_or("uup_fetch did not return an output path")?;
+
+    let resolved = if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    };
+    if !resolved.exists() {
+        return Err(format!("uup_fetch output does not exist: {}", resolved.display()).into());
+    }
+    Ok(resolved)
 }
 
 fn read_include_manifest_paths(manifest: &Path) -> Result<Vec<PathBuf>, Box<dyn Error>> {
@@ -394,19 +406,12 @@ fn write_manifest(path: &Path, contents: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn install_native_init_to_dir(
-    native_init_exe: &Path,
-    child_exe: &Path,
-    ntdll_dll: &Path,
-    target_dir: &Path,
-) -> Result<(), Box<dyn Error>> {
-    fs::create_dir_all(target_dir.join("Windows/System32"))?;
-    copy_file(
-        native_init_exe,
-        &target_dir.join("Windows/System32/init.exe"),
-    )?;
-    copy_file(child_exe, &target_dir.join("Windows/System32/child.exe"))?;
-    copy_file(ntdll_dll, &target_dir.join("Windows/System32/ntdll.dll"))?;
+fn copy_file(from: &Path, to: &Path) -> Result<(), Box<dyn Error>> {
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(from, to)?;
+
     Ok(())
 }
 
@@ -415,20 +420,12 @@ fn install_windows_real_init_to_dir(target_dir: &Path) -> Result<(), Box<dyn Err
     let autochk = system32.join("autochk.exe");
     if !autochk.exists() {
         return Err(format!(
-            "ROOTFS_PROFILE=windows-real requires {} in staged rootfs",
+            "windows rootfs requires {} in staged rootfs",
             autochk.display()
         )
         .into());
     }
     copy_file(&autochk, &system32.join("init.exe"))?;
-    Ok(())
-}
-
-fn copy_file(from: &Path, to: &Path) -> Result<(), Box<dyn Error>> {
-    if let Some(parent) = to.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::copy(from, to)?;
     Ok(())
 }
 

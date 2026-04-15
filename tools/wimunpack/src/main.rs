@@ -1,8 +1,8 @@
-use binrw::{binrw, BinReaderExt};
+use binrw::{BinReaderExt, binrw};
 use clap::Parser;
 use rayon::prelude::*;
 use std::collections::HashMap;
-use std::fs::{create_dir_all, File};
+use std::fs::{File, create_dir_all};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -15,7 +15,10 @@ const WIM_EXTRA_STREAM_DISK_SIZE: usize = 38;
 #[command(about = "Unpack WIM from Windows ISO", long_about = None)]
 struct Args {
     #[arg(short, long)]
-    iso: PathBuf,
+    iso: Option<PathBuf>,
+
+    #[arg(long)]
+    wim: Option<PathBuf>,
 
     #[arg(short, long)]
     output: PathBuf,
@@ -115,14 +118,25 @@ fn main() -> Result<(), WimUnpackError> {
     let args = Args::parse();
     let include_paths = load_include_paths(&args)?;
 
-    println!("Opening ISO: {}", args.iso.display());
-    let mut wim_reader = open_wim_from_iso(&args.iso, &args.wim_path)?;
-    println!("Found WIM in ISO");
+    let input = if let Some(wim_path) = args.wim.as_ref() {
+        println!("Opening WIM: {}", wim_path.display());
+        WimInput::File(wim_path.clone())
+    } else {
+        let iso = args.iso.as_ref().ok_or_else(|| {
+            WimUnpackError::Wim("--iso is required when --wim is not provided".to_string())
+        })?;
+        println!("Opening ISO: {}", iso.display());
+        WimInput::Iso {
+            iso_path: iso.clone(),
+            wim_path: args.wim_path.clone(),
+        }
+    };
+
+    let mut wim_reader = open_wim(&input)?;
 
     unpack_wim(
         &mut wim_reader,
-        &args.iso,
-        &args.wim_path,
+        &input,
         &args.output,
         include_paths.as_deref(),
     )?;
@@ -134,10 +148,20 @@ trait ReadSeek: Read + Seek + Send {}
 
 impl<T: Read + Seek + Send> ReadSeek for T {}
 
-fn open_wim_from_iso(
-    iso_path: &PathBuf,
-    wim_path: &str,
-) -> Result<Box<dyn ReadSeek>, WimUnpackError> {
+#[derive(Clone, Debug)]
+enum WimInput {
+    Iso { iso_path: PathBuf, wim_path: String },
+    File(PathBuf),
+}
+
+fn open_wim(input: &WimInput) -> Result<Box<dyn ReadSeek>, WimUnpackError> {
+    match input {
+        WimInput::File(path) => Ok(Box::new(File::open(path)?)),
+        WimInput::Iso { iso_path, wim_path } => open_wim_from_iso(iso_path, wim_path),
+    }
+}
+
+fn open_wim_from_iso(iso_path: &Path, wim_path: &str) -> Result<Box<dyn ReadSeek>, WimUnpackError> {
     match iso9660::open_file(iso_path, wim_path) {
         Ok(reader) => Ok(Box::new(reader)),
         Err(iso9660::Error::FileNotFound(_)) => match udf::open_file(iso_path, wim_path) {
@@ -153,8 +177,7 @@ fn open_wim_from_iso(
 
 fn unpack_wim<R: Read + Seek>(
     wim: &mut R,
-    iso_path: &Path,
-    wim_path: &str,
+    input: &WimInput,
     output: &Path,
     include_paths: Option<&[String]>,
 ) -> Result<(), WimUnpackError> {
@@ -206,11 +229,16 @@ fn unpack_wim<R: Read + Seek>(
     )?;
 
     tasks.par_iter().try_for_each_init(
-        || open_wim_from_iso(&iso_path.to_path_buf(), wim_path),
+        || open_wim(input),
         |reader, task| {
-            let reader = reader
-                .as_mut()
-                .map_err(|err| WimUnpackError::Iso(err.to_string()))?;
+            let reader = match reader {
+                Ok(reader) => reader,
+                Err(err) => {
+                    return Err(WimUnpackError::Wim(format!(
+                        "failed to open WIM reader: {err}"
+                    )));
+                }
+            };
             extract_blob_to_path(&mut **reader, task, header.compression_size)
         },
     )?;
