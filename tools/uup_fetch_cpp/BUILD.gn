@@ -1,0 +1,12 @@
+executable("uup_fetch_cpp") {
+  sources = [
+    "main.cc",
+    "http.cc",
+    "xml.cc",
+    "update_payload.cc",
+  ]
+
+  deps = [
+    "//third_party:curl"
+  ]
+}

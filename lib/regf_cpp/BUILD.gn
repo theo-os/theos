@@ -1,0 +1,4 @@
+source_set("regf_cpp") {
+  sources = [ "regf.cc" ]
+  configs += [ "//build/config:freestanding" ]
+}

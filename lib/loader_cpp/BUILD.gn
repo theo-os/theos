@@ -1,0 +1,4 @@
+source_set("loader_cpp") {
+  sources = [ "loader.cc" ]
+  configs += [ "//build/config:freestanding" ]
+}

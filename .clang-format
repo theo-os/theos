@@ -1,0 +1,4 @@
+AlignAfterOpenBracket: DontAlign
+IndentWidth: 2
+ContinuationIndentWidth: 2
+BinPackArguments: false

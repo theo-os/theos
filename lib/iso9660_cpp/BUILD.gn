@@ -1,0 +1,4 @@
+source_set("iso9660_cpp") {
+  sources = [ "iso9660.cc" ]
+  configs += [ "//build/config:freestanding" ]
+}

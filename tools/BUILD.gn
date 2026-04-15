@@ -1,0 +1,8 @@
+group("tools") {
+  deps = [
+    "mkrootfs_cpp",
+    "run_cpp",
+    "uup_fetch_cpp",
+    "wimunpack_cpp",
+  ]
+}

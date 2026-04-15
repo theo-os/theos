@@ -1,0 +1,10 @@
+group("lib") {
+  deps = [
+    "crabfs_cpp",
+    "iso9660_cpp",
+    "loader_cpp",
+    "regf_cpp",
+    "udf_cpp",
+    "wim_lzx_cpp",
+  ]
+}

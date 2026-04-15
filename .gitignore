@@ -16,8 +16,12 @@ target/
 *.lib
 *.pdb
 /buck-out
+/out
 .codex
 .rootfs-staging
 .rootfs-build.manifest
 .rootfs-extract.manifest
 .invest-*
+/third_party/*
+!/third_party/*.py
+!/third_party/*.gn

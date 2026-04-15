@@ -1,0 +1,23 @@
+if (target_os == "") {
+  target_os = host_os
+}
+if (target_cpu == "") {
+  target_cpu = host_cpu
+}
+
+set_default_toolchain("//build/toolchain:host")
+
+default_compiler_configs = [ "//build/config:compiler_defaults" ]
+
+set_defaults("executable") {
+  configs = default_compiler_configs
+}
+set_defaults("static_library") {
+  configs = default_compiler_configs
+}
+set_defaults("shared_library") {
+  configs = default_compiler_configs
+}
+set_defaults("source_set") {
+  configs = default_compiler_configs
+}

@@ -1,0 +1,3 @@
+executable("run_cpp") {
+  sources = [ "main.cc" ]
+}

@@ -1,0 +1,13 @@
+config("compiler_defaults") {
+  cflags_c = [ "-std=c23", "-Wall", "-Wextra" ]
+  cflags_cc = [ "-std=c++2b", "-Wall", "-Wextra" ]
+}
+
+config("freestanding") {
+  cflags = [
+    "-ffreestanding",
+    "-nostdlib",
+    "-fno-exceptions",
+    "-fno-rtti"
+  ]
+}

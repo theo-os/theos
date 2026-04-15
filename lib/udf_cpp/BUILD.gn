@@ -1,0 +1,4 @@
+source_set("udf_cpp") {
+  sources = [ "udf.cc" ]
+  configs += [ "//build/config:freestanding" ]
+}

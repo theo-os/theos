@@ -1,0 +1,4 @@
+source_set("crabfs_cpp") {
+  sources = [ "crabfs.cc" ]
+  configs += [ "//build/config:freestanding" ]
+}

@@ -1,0 +1,4 @@
+source_set("wim_lzx_cpp") {
+  sources = [ "wim_lzx.cc" ]
+  configs += [ "//build/config:freestanding" ]
+}

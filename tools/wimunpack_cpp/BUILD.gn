@@ -1,0 +1,9 @@
+executable("wimunpack_cpp") {
+  sources = [
+    "main.cc",
+  ]
+  deps = [
+    # "//third_party:zstd",
+    # "//third_party:zlib-ng",
+  ]
+}
