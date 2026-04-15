@@ -1,0 +1,4 @@
+package(
+    inherit = True,
+    visibility = [ 'PUBLIC' ],
+)

@@ -24,6 +24,7 @@ system_genrule_toolchain(
 
 system_rust_toolchain(
     name = "rust",
+    default_edition = "2024",
     visibility = ["PUBLIC"],
     rustc_target_triple = select({
         "prelude//os:none": "x86_64-unknown-uefi",
@@ -44,11 +45,21 @@ system_rust_toolchain(
 system_cxx_toolchain(
     name = "cxx",
     visibility = ["PUBLIC"],
+    compiler = "clang-cl",
+    cxx_compiler = "clang-cl",
+    cxx_flags = [
+        "/std:c++20",
+    ],
+    linker = "lld-link",
+    link_style = "static",
+    cpp_dep_tracking_mode = "show_includes",
+    compiler_type = "windows"
 )
 
 system_cxx_toolchain(
     name = "cxx_uefi",
     link_style = "static",
-    linker = "toolchains/lld-link.sh",
+    compiler_type = "windows",
+    linker = "lld-link",
     visibility = ["PUBLIC"],
 )

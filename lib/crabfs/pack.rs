@@ -10,7 +10,6 @@ use crate::on_disk::superblock::Superblock;
 use crate::reader;
 use crate::writer::{MkfsOptions, mkfs};
 use std::fs;
-use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::string::String;
 use std::vec;
@@ -62,6 +61,43 @@ impl Node {
     fn inode_mode(&self) -> u16 {
         self.mode
     }
+}
+
+#[cfg(unix)]
+fn metadata_mode(meta: &fs::Metadata) -> u16 {
+    meta.mode() as u16
+}
+
+#[cfg(not(unix))]
+fn metadata_mode(meta: &fs::Metadata) -> u16 {
+    let file_type = meta.file_type();
+    if file_type.is_dir() {
+        0o040755
+    } else if file_type.is_symlink() {
+        0o120777
+    } else {
+        0o100644
+    }
+}
+
+#[cfg(unix)]
+fn metadata_uid(meta: &fs::Metadata) -> u32 {
+    meta.uid()
+}
+
+#[cfg(not(unix))]
+fn metadata_uid(_meta: &fs::Metadata) -> u32 {
+    0
+}
+
+#[cfg(unix)]
+fn metadata_gid(meta: &fs::Metadata) -> u32 {
+    meta.gid()
+}
+
+#[cfg(not(unix))]
+fn metadata_gid(_meta: &fs::Metadata) -> u32 {
+    0
 }
 
 pub fn pack_from_directory<D: BlockDevice>(
@@ -164,9 +200,9 @@ fn collect_tree(
     report: &mut PackReport,
 ) -> Result<usize, WriteError> {
     let meta = fs::symlink_metadata(path).map_err(|_| WriteError::Device(DeviceError::Io))?;
-    let mode = meta.mode() as u16;
-    let uid = meta.uid();
-    let gid = meta.gid();
+    let mode = metadata_mode(&meta);
+    let uid = metadata_uid(&meta);
+    let gid = metadata_gid(&meta);
 
     let placeholder = Node {
         parent_index,
@@ -219,11 +255,7 @@ fn collect_tree(
     } else if file_type.is_file() {
         let data = fs::read(path).map_err(|_| WriteError::Device(DeviceError::Io))?;
         nodes[index].kind = NodeKind::File { data };
-    } else if file_type.is_char_device()
-        || file_type.is_block_device()
-        || file_type.is_fifo()
-        || file_type.is_socket()
-    {
+    } else {
         report
             .skipped
             .push(path.strip_prefix(root).unwrap_or(path).to_path_buf());

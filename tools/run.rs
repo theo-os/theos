@@ -268,8 +268,12 @@ fn prepare_rootfs_staging(
                 return Err("windows profile requires include-list manifest".into());
             };
             let expected_paths = read_include_manifest_paths(windows_rootfs_manifest)?;
-            let extract_signature =
-                rootfs_extract_signature(profile, iso_path, windows_rootfs_manifest, wimunpack_bin)?;
+            let extract_signature = rootfs_extract_signature(
+                profile,
+                iso_path,
+                windows_rootfs_manifest,
+                wimunpack_bin,
+            )?;
             if staging.exists()
                 && manifest_matches(extract_manifest, &extract_signature)?
                 && staging_contains_paths(staging, &expected_paths)
@@ -331,10 +335,7 @@ fn rootfs_build_signature(
     });
     if let Some(manifest) = windows_rootfs_manifest {
         signature.push_str(&format!("iso={}\n", file_signature(iso_path)?));
-        signature.push_str(&format!(
-            "include_list={}\n",
-            file_signature(manifest)?
-        ));
+        signature.push_str(&format!("include_list={}\n", file_signature(manifest)?));
     }
     signature.push_str(&format!("rootfs_size_mib={rootfs_size_mib}\n"));
     signature.push_str(&format!("mkrootfs={}\n", file_signature(mkrootfs_bin)?));

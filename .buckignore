@@ -1,5 +1,0 @@
-.rootfs-staging
-.rootfs-build.manifest
-.rootfs-extract.manifest
-efi_root
-rootfs.img

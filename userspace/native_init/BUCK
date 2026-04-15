@@ -18,7 +18,7 @@ genrule(
     default_outs = ["init.exe"],
     executable_outs = ["init"],
     visibility = ["PUBLIC"],
-    bash = """
+    cmd = """
 set -euo pipefail
 
 clang --target=x86_64-pc-windows-msvc -ffreestanding -fno-stack-protector -fno-builtin \

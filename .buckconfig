@@ -13,12 +13,13 @@
   fbcode_macros = none
   buck = none
 
-[external_cells]
-  prelude = bundled
+# Use the vendored prelude in `./prelude` so it can be customized.
+# (The bundled prelude can still be used by re-adding `[external_cells]`.)
 
 [parser]
   target_platform_detector_spec = target:root//kernel/...->toolchains//:uefi \
     target:root//...->prelude//platforms:default \
+    target:third-party//...->prelude//platforms:default \
     target:prelude//...->prelude//platforms:default \
     target:toolchains//...->prelude//platforms:default
 
@@ -28,7 +29,6 @@
 [buck2]
 platforms = prelude//platforms:default, toolchains//:uefi
 constraints = prelude//cpu/constraints:x86_64, prelude//os/constraints:none
-file_watcher = watchman
 
 # 'buck2 test' should also build anything matching given target patterns
 test_builds_targets = true
@@ -77,4 +77,5 @@ ignore = \
   .direnv, \
   .watchman-cookie**, \
   .gdb_history**, \
-  **.bck
+  **.bck \
+  third-party/target
