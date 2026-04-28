@@ -1,7 +1,6 @@
 extern crate alloc;
 
 use alloc::string::{String, ToString};
-use limine::request::ExecutableCmdlineRequest;
 use spin::Lazy;
 
 #[derive(Debug, Clone, Default)]
@@ -24,10 +23,6 @@ pub enum RootDevice {
 pub enum RootFsType {
     Crabfs,
 }
-
-#[used]
-#[unsafe(link_section = ".limine_requests")]
-pub static EXECUTABLE_CMDLINE_REQUEST: ExecutableCmdlineRequest = ExecutableCmdlineRequest::new();
 
 static KERNEL_PARAMS: Lazy<KernelParams> = Lazy::new(parse_kernel_params);
 
@@ -59,12 +54,7 @@ pub fn resolved_root_fstype() -> Option<RootFsType> {
 }
 
 fn parse_kernel_params() -> KernelParams {
-    let raw = EXECUTABLE_CMDLINE_REQUEST
-        .get_response()
-        .and_then(|response| response.cmdline().to_str().ok())
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let raw = "".to_string();
 
     let mut params = KernelParams {
         raw: raw.clone(),

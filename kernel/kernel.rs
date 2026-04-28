@@ -26,57 +26,30 @@ pub mod vfs;
 pub mod virtio_blk;
 pub mod zram;
 
-use core::{arch::asm, panic::PanicInfo};
 use alloc::string::ToString;
-use alloc::vec::Vec;
-use limine::{
-    request::{
-        EntryPointRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker,
-        StackSizeRequest,
-    },
-    BaseRevision,
-};
 #[cfg(target_os = "uefi")]
 use alloc::vec;
+use alloc::vec::Vec;
+use core::{arch::asm, panic::PanicInfo};
+
+#[cfg(target_os = "uefi")]
+use uefi::Identify;
 #[cfg(target_os = "uefi")]
 use uefi::proto::loaded_image::LoadedImage;
 #[cfg(target_os = "uefi")]
 use uefi::proto::media::block::BlockIO;
-use uefi::table::boot::SearchType;
 #[cfg(target_os = "uefi")]
-use uefi::Identify;
-use x86_64::registers::control::{Cr0, Cr0Flags, Cr4, Cr4Flags};
+use uefi::boot::{SearchType, EventType, Tpl};
+#[cfg(target_os = "uefi")]
+use uefi::proto::pi::mp::MpServices;
+use x86_64::registers::control::{Cr0, Cr0Flags, Cr3, Cr3Flags, Cr4, Cr4Flags};
+use x86_64::structures::paging::{PhysFrame};
+use x86_64::{PhysAddr, VirtAddr};
 
-const LIMINE_STACK_SIZE: u64 = 1024 * 1024;
-
-#[used]
-#[unsafe(link_section = ".limine_requests_start_marker")]
-static REQUESTS_START_MARKER: RequestsStartMarker = RequestsStartMarker::new();
-
-#[used]
-#[unsafe(link_section = ".limine_requests")]
-static BASE_REVISION: BaseRevision = BaseRevision::with_revision(6);
-
-#[used]
-#[unsafe(link_section = ".limine_requests")]
-static HHDM_REQUEST: HhdmRequest = HhdmRequest::new();
-
-#[used]
-#[unsafe(link_section = ".limine_requests")]
-static MEMORY_MAP_REQUEST: MemoryMapRequest = MemoryMapRequest::new();
-
-#[used]
-#[unsafe(link_section = ".limine_requests")]
-static STACK_SIZE_REQUEST: StackSizeRequest = StackSizeRequest::new().with_size(LIMINE_STACK_SIZE);
-
-#[used]
-#[unsafe(link_section = ".limine_requests")]
-static ENTRY_POINT_REQUEST: EntryPointRequest =
-    EntryPointRequest::new().with_entry_point(kernel_main);
-
-#[used]
-#[unsafe(link_section = ".limine_requests_end_marker")]
-static REQUESTS_END_MARKER: RequestsEndMarker = RequestsEndMarker::new();
+pub struct BootInfo {
+    pub hhdm_offset: VirtAddr,
+    pub memory_map: Option<uefi::mem::memory_map::MemoryMapOwned>,
+}
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -87,24 +60,32 @@ fn panic(info: &PanicInfo) -> ! {
 #[cfg(not(target_os = "uefi"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    kernel_main()
+    kernel_main(BootInfo {
+        hhdm_offset: VirtAddr::new(0),
+        memory_map: None,
+    })
 }
 
 #[cfg(target_os = "uefi")]
 #[uefi::entry]
-fn efi_main(
-    handle: uefi::Handle,
-    system_table: uefi::table::SystemTable<uefi::table::Boot>,
-) -> uefi::Status {
-    println!("NT KERNEL: Booted via EFI STUB!");
+fn efi_main() -> uefi::Status {
+    let handle = uefi::boot::image_handle();
 
-    // Allocate a heap from UEFI
-    let heap_pages = (allocator::HEAP_SIZE + 4095) / 4096;
-    let heap_ptr = system_table
-        .boot_services()
-        .allocate_pages(
-            uefi::table::boot::AllocateType::AnyPages,
-            uefi::table::boot::MemoryType::LOADER_DATA,
+    println!("NT KERNEL: Booted via direct UEFI path!");
+
+    // Disable Write Protect to allow re-mapping page tables if UEFI locked them
+    unsafe {
+        Cr0::update(|cr0| {
+            cr0.remove(Cr0Flags::WRITE_PROTECT);
+        });
+    }
+
+    // Allocate a small early heap from UEFI
+    let early_heap_size = 16 * 1024 * 1024; // 16 MiB
+    let heap_pages = (early_heap_size + 4095) / 4096;
+    let heap_ptr = uefi::boot::allocate_pages(
+            uefi::boot::AllocateType::AnyPages,
+            uefi::boot::MemoryType::LOADER_DATA,
             heap_pages,
         )
         .expect("Failed to allocate heap pages from UEFI");
@@ -112,37 +93,99 @@ fn efi_main(
     unsafe {
         allocator::ALLOCATOR
             .lock()
-            .init(heap_ptr as *mut u8, allocator::HEAP_SIZE);
+            .init(heap_ptr.as_ptr(), early_heap_size);
     }
-    allocator::set_heap_base(heap_ptr);
+    allocator::set_heap_base(heap_ptr.as_ptr() as u64);
 
     println!(
-        "NT KERNEL: Heap initialized via UEFI at {:p}",
-        heap_ptr as *const u8
+        "NT KERNEL: Early heap initialized via UEFI at {:p} ({} bytes)",
+        heap_ptr.as_ptr(), early_heap_size
     );
 
-    allocator::init_uefi_runtime(system_table.boot_services());
+    // Create a new L4 page table to avoid modifying UEFI's potentially read-only L4
+    let new_l4_ptr = uefi::boot::allocate_pages(
+        uefi::boot::AllocateType::AnyPages,
+        uefi::boot::MemoryType::LOADER_DATA,
+        1
+    ).expect("Failed to allocate new L4");
+    let new_l4_addr = new_l4_ptr.as_ptr() as u64;
+    
+    unsafe {
+        // Zero it out
+        core::ptr::write_bytes(new_l4_addr as *mut u8, 0, 4096);
+        
+        // Copy current L4 entries to maintain identity mapping and UEFI environment
+        let (current_l4_frame, _) = Cr3::read();
+        let current_l4_ptr = current_l4_frame.start_address().as_u64() as *const u8;
+        core::ptr::copy_nonoverlapping(current_l4_ptr, new_l4_addr as *mut u8, 4096);
+        
+        // Switch to the new, writable L4
+        Cr3::write(
+            PhysFrame::containing_address(PhysAddr::new(new_l4_addr)),
+            Cr3Flags::empty()
+        );
+    }
+
+    // Attempt to start APs via UEFI Multi-Processor Services
+    if let Ok(mp_handle) = uefi::boot::get_handle_for_protocol::<MpServices>() {
+        if let Ok(mp) = uefi::boot::open_protocol_exclusive::<MpServices>(mp_handle) {
+            if let Ok(count) = mp.get_number_of_processors() {
+                smp::set_discovered_cpus(count.total);
+                if let Ok(pi) = mp.get_processor_info(0) {
+                    smp::set_bsp_lapic_id(pi.location.thread); // In QEMU thread is often lapic_id
+                }
+                
+                if count.total > 1 {
+                    println!("NT KERNEL: starting {} APs via UEFI...", count.total - 1);
+                    
+                    // Create an event for non-blocking AP startup to avoid hang
+                    let event = unsafe {
+                        uefi::boot::create_event(
+                            EventType::empty(),
+                            Tpl::CALLBACK,
+                            None,
+                            None // notify_context
+                        ).ok()
+                    };
+
+                    let _ = mp.startup_all_aps(
+                        false, // all APs
+                        smp::uefi_ap_entry,
+                        core::ptr::null_mut(),
+                        event,
+                        None
+                    );
+                }
+            }
+        }
+    }
+
+    // Get memory map before we potentially lose access to boot services
+    let memory_map = uefi::boot::memory_map(uefi::boot::MemoryType::LOADER_DATA)
+        .expect("Failed to get UEFI memory map");
+
+    allocator::init_uefi_runtime();
     apic::set_hhdm_offset(x86_64::VirtAddr::new(0));
     println!("NT KERNEL: runtime allocator initialized from UEFI boot services");
 
-    install_uefi_root_device(handle, &system_table);
+    install_uefi_root_device(handle);
 
     // Transition to the kernel
-    println!("Transitioning to kernel..."); // This might not work if UEFI console is gone
+    println!("Transitioning to kernel..."); 
 
-    kernel_main()
+    kernel_main(BootInfo {
+        hhdm_offset: VirtAddr::new(0), // UEFI identity maps by default
+        memory_map: Some(memory_map),
+    })
 }
 
 #[cfg(target_os = "uefi")]
 fn install_uefi_root_device(
     image_handle: uefi::Handle,
-    system_table: &uefi::table::SystemTable<uefi::table::Boot>,
 ) {
     const CRABFS_SUPERBLOCK_MAGIC: [u8; 4] = *b"XFSB";
 
-    let Ok(loaded_image) = system_table
-        .boot_services()
-        .open_protocol_exclusive::<LoadedImage>(image_handle)
+    let Ok(loaded_image) = uefi::boot::open_protocol_exclusive::<LoadedImage>(image_handle)
     else {
         println!("NT KERNEL: failed to open LoadedImage protocol");
         return;
@@ -150,23 +193,16 @@ fn install_uefi_root_device(
     let boot_device = loaded_image.device();
     drop(loaded_image);
 
-    let Ok(handles) = system_table
-        .boot_services()
-        .locate_handle_buffer(SearchType::ByProtocol(&BlockIO::GUID))
+    let Ok(handles) = uefi::boot::locate_handle_buffer(SearchType::ByProtocol(&BlockIO::GUID))
     else {
         println!("NT KERNEL: no UEFI BlockIO handles found");
         return;
     };
 
     let mut best: Option<(*mut BlockIO, u32, usize, usize, u64)> = None;
-    for handle in handles.iter().copied() {
-        if Some(handle) == boot_device {
-            continue;
-        }
-
-        let Ok(block_io) = system_table
-            .boot_services()
-            .open_protocol_exclusive::<BlockIO>(handle)
+    for (i, handle) in handles.iter().copied().enumerate() {
+        let is_boot = Some(handle) == boot_device;
+        let Ok(block_io) = uefi::boot::open_protocol_exclusive::<BlockIO>(handle)
         else {
             continue;
         };
@@ -183,6 +219,10 @@ fn install_uefi_root_device(
         if block_io.read_blocks(media_id, 0, &mut sector0).is_err() {
             continue;
         }
+        println!(
+            "NT KERNEL: probing disk #{} (media_id={} blocks={} is_boot={}) magic={:02x}{:02x}{:02x}{:02x}",
+            i, media_id, last_block + 1, is_boot, sector0[0], sector0[1], sector0[2], sector0[3]
+        );
         if sector0[..4] != CRABFS_SUPERBLOCK_MAGIC {
             continue;
         }
@@ -207,57 +247,42 @@ fn install_uefi_root_device(
 
 fn prepare_init_task(task_id: usize) -> Option<process::Task> {
     let requested = cmdline::resolved_init_path();
-    let mut candidates = Vec::new();
-    if requested.eq_ignore_ascii_case("\\SystemRoot\\System32\\init.exe") {
-        candidates.push("\\SystemRoot\\System32\\autochk.exe".to_string());
-    }
-    candidates.push(requested.clone());
-
-    for init_path in candidates {
-        match user::create_init_task(task_id, &init_path) {
-            Ok(task) => {
-                println!("NT KERNEL: native init {} task prepared", init_path);
-                return Some(task);
-            }
-            Err(init_err) => {
-                println!(
-                    "NT KERNEL: native init {} prepare failed: {:#x}",
-                    init_path, init_err
-                );
-            }
+    match user::create_init_task(task_id, &requested) {
+        Ok(task) => {
+            println!("NT KERNEL: native init {} task prepared", requested);
+            return Some(task);
+        }
+        Err(init_err) => {
+            println!(
+                "NT KERNEL: native init {} prepare failed: {:#x}",
+                requested, init_err
+            );
         }
     }
     None
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn kernel_main() -> ! {
+pub extern "C" fn kernel_main(boot_info: BootInfo) -> ! {
     unsafe {
         asm!("cli");
     }
     println!("NT KERNEL: Initializing (CPU INTERRUPTS DISABLED)...");
-    let limine_hhdm = HHDM_REQUEST.get_response();
-    if BASE_REVISION.is_valid() {
-        println!(
-            "NT KERNEL: Limine base revision loaded={}",
-            BASE_REVISION.loaded_revision().unwrap_or(0)
-        );
-    }
+
     let mut reclaim_demo_base = None;
-    if let Some(hhdm) = limine_hhdm {
-        let physical_memory_offset = x86_64::VirtAddr::new(hhdm.offset());
-        apic::set_hhdm_offset(physical_memory_offset);
-        let mut mapper = unsafe { paging::init(physical_memory_offset) };
-        if let Some(mmap) = MEMORY_MAP_REQUEST.get_response() {
-            let mut frame_allocator = allocator::BootInfoFrameAllocator::init_from_limine(mmap);
-            allocator::init_heap(&mut mapper, &mut frame_allocator)
-                .expect("Heap initialization failed");
-            allocator::init_runtime(physical_memory_offset, frame_allocator);
-            reclaim_demo_base =
-                Some(reclaim::allocate_region(3).expect("failed to allocate reclaim demo region"));
-        }
+    let physical_memory_offset = boot_info.hhdm_offset;
+    apic::set_hhdm_offset(physical_memory_offset);
+    
+    let mut mapper = unsafe { paging::init(physical_memory_offset) };
+    if let Some(mmap) = boot_info.memory_map {
+        let mut frame_allocator = allocator::BootInfoFrameAllocator::init_from_uefi(&mmap);
+        allocator::init_heap(&mut mapper, &mut frame_allocator)
+            .expect("Heap initialization failed");
+        allocator::init_runtime(physical_memory_offset, frame_allocator);
+        reclaim_demo_base =
+            Some(reclaim::allocate_region(3).expect("failed to allocate reclaim demo region"));
     } else {
-        println!("NT KERNEL: No Limine response. Continuing with UEFI stub initialization...");
+        println!("NT KERNEL: No memory map provided. Memory management might be limited.");
     }
 
     println!("NT KERNEL: Heap initialized.");
@@ -289,58 +314,10 @@ pub extern "C" fn kernel_main() -> ! {
     syscall::init();
     println!("NT KERNEL: Syscalls initialized.");
 
-    let mut init_task = None;
-    if limine_hhdm.is_none() {
-        match vfs::mount_uefi_root() {
-            Ok(()) => {
-                println!("NT KERNEL: mounted root via UEFI BlockIO");
-                init_task = prepare_init_task(3);
-            }
-            Err(mount_err) => {
-                println!("NT KERNEL: UEFI root mount failed: {:?}", mount_err);
-            }
-        }
-    } else {
-        match (
-            cmdline::resolved_root_device(),
-            cmdline::resolved_root_fstype(),
-            virtio_blk::VirtioBlkDevice::probe(),
-        ) {
-        (Some(cmdline::RootDevice::VirtioBlk0), Some(cmdline::RootFsType::Crabfs), Ok(dev)) => {
-            println!("NT KERNEL: PCI found modern virtio-blk");
-            match vfs::mount_root(dev) {
-                Ok(()) => {
-                    println!("NT KERNEL: crabfs root mounted");
-                    init_task = prepare_init_task(3);
-                }
-                Err(_) => {
-                    println!("NT KERNEL: crabfs mount failed");
-                }
-            }
-        }
-        (None, _, _) => {
-            println!("NT KERNEL: unsupported root= parameter");
-        }
-        (_, None, _) => {
-            println!("NT KERNEL: unsupported rootfstype= parameter");
-        }
-        (_, _, Err(err)) => match vfs::mount_uefi_root() {
-            Ok(()) => {
-                println!("NT KERNEL: mounted root via UEFI BlockIO");
-                init_task = prepare_init_task(3);
-            }
-            Err(mount_err) => {
-                println!(
-                    "NT KERNEL: virtio-blk probe failed: {:?}, UEFI root mount failed: {:?}",
-                    err, mount_err
-                );
-            }
-        },
-        }
-    }
-
-    if false {
-        let reclaim_base = reclaim_demo_base.expect("reclaim demo base");
+    // Run zram/reclaim demo logic before vfs/task initialization
+    // because prepare_init_task will switch Cr3 to the new user process,
+    // which lacks the lower-half RECLAIM_START mappings.
+    if let Some(reclaim_base) = reclaim_demo_base {
         unsafe {
             for offset in 0..zram::PAGE_SIZE {
                 reclaim_base
@@ -387,11 +364,9 @@ pub extern "C" fn kernel_main() -> ! {
             reclaim_stats.reclaims,
             reclaim_stats.restored_faults
         );
-    } else {
-        println!("NT KERNEL: reclaim demo unavailable without Limine memory services");
     }
 
-    if false {
+    if true {
         let mut zram_device = zram::ZramDevice::new(64);
         let mut zswap_cache = zram::ZswapCache::new(64);
 
@@ -444,6 +419,17 @@ pub extern "C" fn kernel_main() -> ! {
             "NT KERNEL: zswap hits={}, misses={}, backend_invalidations={}",
             zswap_stats.hits, zswap_stats.misses, zswap_stats.backend.invalidations
         );
+    }
+
+    let mut init_task = None;
+    match vfs::mount_uefi_root() {
+        Ok(()) => {
+            println!("NT KERNEL: mounted root via UEFI BlockIO");
+            init_task = prepare_init_task(3);
+        }
+        Err(mount_err) => {
+            println!("NT KERNEL: UEFI root mount failed: {:?}", mount_err);
+        }
     }
 
     if let Some(task) = init_task {

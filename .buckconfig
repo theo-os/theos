@@ -28,7 +28,6 @@
 [buck2]
 platforms = prelude//platforms:default, toolchains//:uefi
 constraints = prelude//cpu/constraints:x86_64, prelude//os/constraints:none
-file_watcher = watchman
 
 # 'buck2 test' should also build anything matching given target patterns
 test_builds_targets = true

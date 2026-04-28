@@ -108,9 +108,8 @@ impl UefiBlockDevice {
         unsafe { &mut *self.block_io }
     }
 
-    fn scratch_buffer(&self, len: usize) -> Result<AlignedBuffer, DeviceError> {
-        let align = self.io_align.max(core::mem::align_of::<usize>());
-        AlignedBuffer::new(len, align).ok_or(DeviceError::Io)
+    fn scratch_buffer(&self, len: usize) -> Result<UefiAlignedBuffer, DeviceError> {
+        UefiAlignedBuffer::new(len).ok_or(DeviceError::Io)
     }
 }
 
@@ -141,20 +140,6 @@ impl BlockDevice for UefiBlockDevice {
                 err.status()
             );
             return Err(DeviceError::Io);
-        }
-        if offset == 0 {
-            let header = &scratch.as_slice()[..8.min(scratch.as_slice().len())];
-            println!(
-                "NT KERNEL: UEFI BlockIO sector0 {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
-                header.first().copied().unwrap_or(0),
-                header.get(1).copied().unwrap_or(0),
-                header.get(2).copied().unwrap_or(0),
-                header.get(3).copied().unwrap_or(0),
-                header.get(4).copied().unwrap_or(0),
-                header.get(5).copied().unwrap_or(0),
-                header.get(6).copied().unwrap_or(0),
-                header.get(7).copied().unwrap_or(0),
-            );
         }
 
         let start = usize::try_from(offset % block_size).map_err(|_| DeviceError::Io)?;
@@ -208,6 +193,46 @@ impl BlockDevice for UefiBlockDevice {
             return Err(DeviceError::Io);
         }
         Ok(())
+    }
+}
+
+struct UefiAlignedBuffer {
+    ptr: core::ptr::NonNull<u8>,
+    len: usize,
+}
+
+impl UefiAlignedBuffer {
+    fn new(len: usize) -> Option<Self> {
+        let pages = len.div_ceil(4096);
+        let ptr = uefi::boot::allocate_pages(
+            uefi::boot::AllocateType::AnyPages,
+            uefi::boot::MemoryType::LOADER_DATA,
+            pages
+        ).ok()?;
+        
+        Some(Self {
+            ptr: ptr.cast(),
+            len: pages * 4096,
+        })
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+impl Drop for UefiAlignedBuffer {
+    fn drop(&mut self) {
+        // We can only free if Boot Services are still active.
+        // For a kernel, we'll just leak if we exit boot services,
+        // but during mount they are definitely active.
+        unsafe {
+            let _ = uefi::boot::free_pages(self.ptr.cast(), self.len / 4096);
+        }
     }
 }
 

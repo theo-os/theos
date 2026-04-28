@@ -10,11 +10,10 @@ path = "dummy.rs"
 
 [dependencies]
 x86_64 = "0.15.4"
-limine = "0.5.0"
-uefi = { version = "0.31.0", features = ["alloc", "logger"] }
+uefi = { version = "0.37.0", features = ["alloc", "logger"] }
 thiserror = { version = "2.0.18", default-features = false }
 rootcause = { version = "0.12.1", default-features = false }
-reqwest = { version = "0.13.2", default-features = false, features = [
+reqwest = { version = "0.13.3", default-features = false, features = [
     "rustls-no-provider",
     "stream",
     "http2",
@@ -25,34 +24,34 @@ goblin = { version = "0.10.5", default-features = false, features = [
     "elf64",
     "elf32",
 ] }
-linked_list_allocator = "0.10.5"
+linked_list_allocator = "0.10.6"
 toml = { version = "1.1.2+spec-1.1.0", default-features = false }
 spin = "0.10.0"
-plist = "1.8.0"
+plist = "1.9.0"
 serde = { version = "1.0.228", default-features = false, features = ["derive"] }
-tokio = { version = "1.50.0", default-features = false }
-clap = { version = "4.6.0", features = [
+tokio = { version = "1.52.1", default-features = false }
+clap = { version = "4.6.1", features = [
     "derive",
     "std",
     "help",
     "usage",
 ], default-features = false }
-aes = "0.8.4"
-hmac = "0.12.1"
-pbkdf2 = "0.12.2"
+aes = "0.9.0"
+hmac = "0.13.0"
+pbkdf2 = "0.13.0"
 cipher = { version = "0.5.1", features = ["block-padding"] }
 indicatif = "0.18.4"
 byteorder = "1.5"
-bitflags = { version = "2.11.0", default-features = false }
-libc = { version = "0.2.183", default-features = false }
+bitflags = { version = "2.11.1", default-features = false }
+libc = { version = "0.2.186", default-features = false }
 xattr = "1.6.1"
 rustix = { version = "1.1.4", default-features = false, features = [
     "fs",
     "std",
 ] }
 errno = { version = "0.3.14", default-features = false }
-zip = "8.5.0"
-rayon = "1.11.0"
+zip = "8.6.0"
+rayon = "1.12.0"
 futures-util = "0.3"
 unicode-normalization = { version = "0.1", default-features = false }
 fatfs = "0.3"
@@ -61,7 +60,7 @@ serde_bytes = "0.11"
 getrandom = "0.4"
 flate2 = "1.1"
 crc32fast = "1.5"
-hashbrown = "0.16"
+hashbrown = "0.17"
 sha1 = "0.11.0"
 memmap2 = "0.9"
 binrw = { version = "0.15.1", default-features = false }
@@ -72,7 +71,7 @@ lz4_flex = { git = "https://github.com/PSeitz/lz4_flex", branch = "hc_pr", defau
     "checked-decode",
 ] }
 pic8259 = "0.11.0"
-rand_core = { version = "0.10.0", default-features = false }
+rand_core = { version = "0.10.1", default-features = false }
 rand_chacha = { version = "0.10.0", default-features = false }
 
 [profile.dev]

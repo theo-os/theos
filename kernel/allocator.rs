@@ -3,12 +3,11 @@ extern crate alloc;
 use crate::paging;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use limine::request::MemoryMapRequest;
 use spin::{Lazy, Mutex};
 #[cfg(target_os = "uefi")]
-use uefi::table::boot::{AllocateType, BootServices};
+use uefi::boot::{AllocateType};
 use uefi::mem::memory_map::MemoryMap as _;
-use uefi::table::boot::MemoryType;
+use uefi::boot::MemoryType;
 use x86_64::structures::paging::{
     mapper::{FlagUpdateError, MapToError, UnmapError},
     FrameAllocator, Mapper as _, OffsetPageTable, Page, PageSize, PageTableFlags, PhysFrame,
@@ -37,32 +36,10 @@ pub enum RuntimeFrameAllocator {
 
 #[cfg(target_os = "uefi")]
 pub struct UefiFrameAllocator {
-    boot_services_addr: usize,
     recycled: Vec<PhysFrame>,
 }
 
 impl BootInfoFrameAllocator {
-    pub unsafe fn init(memory_map: &'static MemoryMapRequest) -> Self {
-        let response = memory_map.get_response().unwrap();
-        Self::init_from_limine(response)
-    }
-
-    pub fn init_from_limine(response: &'static limine::response::MemoryMapResponse) -> Self {
-        let mut regions = Vec::new();
-        for entry in response.entries() {
-            let usable = unsafe {
-                core::mem::transmute::<limine::memory_map::EntryType, u64>(entry.entry_type) == 0
-            };
-            if usable {
-                regions.push(MemoryRegion {
-                    base: entry.base,
-                    length: entry.length,
-                });
-            }
-        }
-        Self::init_from_regions(regions)
-    }
-
     pub fn init_from_uefi(memory_map: &uefi::mem::memory_map::MemoryMapOwned) -> Self {
         let mut regions = Vec::new();
         for entry in memory_map.entries() {
@@ -132,19 +109,18 @@ unsafe impl FrameAllocator<Size4KiB> for UefiFrameAllocator {
             return Some(frame);
         }
 
-        let boot_services = unsafe { (self.boot_services_addr as *mut BootServices).as_mut() }?;
-        let phys = boot_services
-            .allocate_pages(AllocateType::AnyPages, MemoryType::LOADER_DATA, 1)
+        let phys = uefi::boot::allocate_pages(AllocateType::AnyPages, MemoryType::LOADER_DATA, 1)
             .ok()?;
-        if phys < Size4KiB::SIZE {
+        let addr = phys.as_ptr() as u64;
+        if addr < Size4KiB::SIZE {
             return self.allocate_frame();
         }
-        Some(PhysFrame::containing_address(PhysAddr::new(phys)))
+        Some(PhysFrame::containing_address(PhysAddr::new(addr)))
     }
 }
 
 pub const HEAP_START: usize = 0x_4444_4444_0000;
-pub const HEAP_SIZE: usize = 256 * 1024 * 1024; // 256 MiB
+pub const HEAP_SIZE: usize = 64 * 1024 * 1024; // 64 MiB
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VmError {
@@ -221,11 +197,10 @@ pub fn heap_base() -> u64 {
 }
 
 #[cfg(target_os = "uefi")]
-pub fn init_uefi_runtime(boot_services: &BootServices) {
+pub fn init_uefi_runtime() {
     init_runtime_with_allocator(
         VirtAddr::new(0),
         RuntimeFrameAllocator::Uefi(UefiFrameAllocator {
-            boot_services_addr: boot_services as *const BootServices as usize,
             recycled: Vec::new(),
         }),
     );

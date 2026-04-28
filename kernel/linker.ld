@@ -34,11 +34,6 @@ SECTIONS
         *(.got .got.*)
         *(.got.plt .got.plt.*)
         *(.relro_padding)
-
-        . = ALIGN(8);
-        KEEP(*(.limine_requests_start_marker))
-        KEEP(*(.limine_requests))
-        KEEP(*(.limine_requests_end_marker))
     } :data
 
     .bss (NOLOAD) : {

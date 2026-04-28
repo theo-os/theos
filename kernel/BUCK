@@ -13,7 +13,6 @@ rust_binary(
         "//lib/regf:regf",
         "third-party//:bitflags",
         "third-party//:goblin",
-        "third-party//:limine",
         "third-party//:linked_list_allocator",
         "third-party//:lz4_flex",
         "third-party//:pic8259",

@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             &rootfs_extract_manifest,
         )?;
         match effective_profile {
-            RootfsProfile::Minimal | RootfsProfile::Windows => {
+            RootfsProfile::Windows => {
                 install_native_init_to_dir(
                     &native_init_exe,
                     &child_exe,
@@ -126,7 +126,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "-device".to_string(),
         "virtio-blk-pci,drive=drv0".to_string(),
         "-serial".to_string(),
-        "stdio".to_string(),
+        "mon:stdio".to_string(),
         "-display".to_string(),
         "none".to_string(),
         "-m".to_string(),
@@ -192,14 +192,12 @@ fn resolve_rootfs_size_mib(source: &Path) -> Result<String, Box<dyn Error>> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RootfsProfile {
-    Minimal,
     Windows,
     WindowsReal,
 }
 
 fn resolve_rootfs_profile(profile: &str, iso_path: &Path) -> Result<RootfsProfile, Box<dyn Error>> {
     match profile {
-        "minimal" => Ok(RootfsProfile::Minimal),
         "windows" => {
             if iso_path.exists() {
                 Ok(RootfsProfile::Windows)
@@ -211,26 +209,19 @@ fn resolve_rootfs_profile(profile: &str, iso_path: &Path) -> Result<RootfsProfil
                 .into())
             }
         }
-        "windows-real" => {
+        "windows-real" | "auto" => {
             if iso_path.exists() {
                 Ok(RootfsProfile::WindowsReal)
             } else {
                 Err(format!(
-                    "ROOTFS_PROFILE=windows-real requested but ISO not found at {}",
+                    "ISO not found at {}; a real Windows ISO is required to build the rootfs",
                     iso_path.display()
                 )
                 .into())
             }
         }
-        "auto" => {
-            if iso_path.exists() {
-                Ok(RootfsProfile::Windows)
-            } else {
-                Ok(RootfsProfile::Minimal)
-            }
-        }
         other => Err(format!(
-            "unsupported ROOTFS_PROFILE={other}; expected auto, minimal, windows, or windows-real"
+            "unsupported ROOTFS_PROFILE={other}; expected auto, windows, or windows-real (minimal is no longer supported)"
         )
         .into()),
     }
@@ -242,7 +233,6 @@ fn rootfs_manifest_for_profile<'a>(
     windows_real_manifest: &'a Path,
 ) -> Option<&'a Path> {
     match profile {
-        RootfsProfile::Minimal => None,
         RootfsProfile::Windows => Some(windows_manifest),
         RootfsProfile::WindowsReal => Some(windows_real_manifest),
     }
@@ -256,40 +246,30 @@ fn prepare_rootfs_staging(
     staging: &Path,
     extract_manifest: &Path,
 ) -> Result<(), Box<dyn Error>> {
-    match profile {
-        RootfsProfile::Minimal => {
-            remove_if_exists(staging)?;
-            remove_if_exists(extract_manifest)?;
-            fs::create_dir_all(staging)?;
-            eprintln!("info: using minimal rootfs profile");
-        }
-        RootfsProfile::Windows | RootfsProfile::WindowsReal => {
-            let Some(windows_rootfs_manifest) = windows_rootfs_manifest else {
-                return Err("windows profile requires include-list manifest".into());
-            };
-            let expected_paths = read_include_manifest_paths(windows_rootfs_manifest)?;
-            let extract_signature =
-                rootfs_extract_signature(profile, iso_path, windows_rootfs_manifest, wimunpack_bin)?;
-            if staging.exists()
-                && manifest_matches(extract_manifest, &extract_signature)?
-                && staging_contains_paths(staging, &expected_paths)
-            {
-                eprintln!("info: reusing cached Windows rootfs extraction");
-            } else {
-                remove_if_exists(staging)?;
-                eprintln!("info: extracting rootfs from {}", iso_path.display());
-                run_cmd(
-                    Command::new(wimunpack_bin)
-                        .arg("--iso")
-                        .arg(iso_path)
-                        .arg("--include-list")
-                        .arg(windows_rootfs_manifest)
-                        .arg("--output")
-                        .arg(staging),
-                )?;
-                write_manifest(extract_manifest, &extract_signature)?;
-            }
-        }
+    let Some(windows_rootfs_manifest) = windows_rootfs_manifest else {
+        return Err("windows profile requires include-list manifest".into());
+    };
+    let expected_paths = read_include_manifest_paths(windows_rootfs_manifest)?;
+    let extract_signature =
+        rootfs_extract_signature(profile, iso_path, windows_rootfs_manifest, wimunpack_bin)?;
+    if staging.exists()
+        && manifest_matches(extract_manifest, &extract_signature)?
+        && staging_contains_paths(staging, &expected_paths)
+    {
+        eprintln!("info: reusing cached Windows rootfs extraction");
+    } else {
+        remove_if_exists(staging)?;
+        eprintln!("info: extracting rootfs from {}", iso_path.display());
+        run_cmd(
+            Command::new(wimunpack_bin)
+                .arg("--iso")
+                .arg(iso_path)
+                .arg("--include-list")
+                .arg(windows_rootfs_manifest)
+                .arg("--output")
+                .arg(staging),
+        )?;
+        write_manifest(extract_manifest, &extract_signature)?;
     }
     Ok(())
 }
@@ -303,7 +283,6 @@ fn rootfs_extract_signature(
     Ok(format!(
         "profile={}\niso={}\ninclude_list={}\nwimunpack={}\n",
         match profile {
-            RootfsProfile::Minimal => "minimal",
             RootfsProfile::Windows => "windows",
             RootfsProfile::WindowsReal => "windows-real",
         },
@@ -325,21 +304,17 @@ fn rootfs_build_signature(
 ) -> Result<String, Box<dyn Error>> {
     let mut signature = String::new();
     signature.push_str(match profile {
-        RootfsProfile::Minimal => "profile=minimal\n",
         RootfsProfile::Windows => "profile=windows\n",
         RootfsProfile::WindowsReal => "profile=windows-real\n",
     });
     if let Some(manifest) = windows_rootfs_manifest {
         signature.push_str(&format!("iso={}\n", file_signature(iso_path)?));
-        signature.push_str(&format!(
-            "include_list={}\n",
-            file_signature(manifest)?
-        ));
+        signature.push_str(&format!("include_list={}\n", file_signature(manifest)?));
     }
     signature.push_str(&format!("rootfs_size_mib={rootfs_size_mib}\n"));
     signature.push_str(&format!("mkrootfs={}\n", file_signature(mkrootfs_bin)?));
     match profile {
-        RootfsProfile::Minimal | RootfsProfile::Windows => {
+        RootfsProfile::Windows => {
             signature.push_str(&format!("init={}\n", file_signature(native_init_exe)?));
             signature.push_str(&format!("child={}\n", file_signature(child_exe)?));
             signature.push_str(&format!("ntdll={}\n", file_signature(ntdll_dll)?));

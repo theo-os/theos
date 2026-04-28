@@ -2698,19 +2698,21 @@ fn load_init_context(
 fn seed_ntdll_heap_globals() -> Result<(), NtStatus> {
     let ntdll = load_module("ntdll.dll")?;
     let image_base = ntdll.image_base;
-    // Win11 ntdll heap globals used by RtlCreateHeap:
-    //   0x1d3fc0: LIST_ENTRY head
-    //   0x1d3fc8: pointer to LIST_ENTRY head
-    //   0x1d3fe0: RTL_CRITICAL_SECTION for heap list lock
-    let heap_list_head = image_base + 0x1d3fc0;
-    let heap_list_ptr = image_base + 0x1d3fc8;
-    let heap_list_lock = image_base + 0x1d3fe0;
-    unsafe {
-        *(heap_list_head as *mut u64) = heap_list_head;
-        *((heap_list_head + 8) as *mut u64) = heap_list_head;
-        *(heap_list_ptr as *mut u64) = heap_list_head;
-        let lock = heap_list_lock as *mut RtlCriticalSection;
-        (*lock).lock_count = -1;
+    // Win11_25H2_English_x64_v2.iso ntdll heap globals used by RtlCreateHeap:
+    //   0x1cc080: LIST_ENTRY head
+    //   0x1cc088: pointer to LIST_ENTRY head
+    //   0x1cc0a0: RTL_CRITICAL_SECTION for heap list lock
+    if ntdll.size_of_image > 0x1cc0b0 {
+        let heap_list_head = image_base + 0x1cc080;
+        let heap_list_ptr = image_base + 0x1cc088;
+        let heap_list_lock = image_base + 0x1cc0a0;
+        unsafe {
+            *(heap_list_head as *mut u64) = heap_list_head;
+            *((heap_list_head + 8) as *mut u64) = heap_list_head;
+            *(heap_list_ptr as *mut u64) = heap_list_head;
+            let lock = heap_list_lock as *mut RtlCriticalSection;
+            (*lock).lock_count = -1;
+        }
     }
     Ok(())
 }
@@ -2750,7 +2752,7 @@ fn install_startup_bootstrap(peb_addr: u64, entry_rip: u64) -> Result<u64, NtSta
     code.extend_from_slice(&[0xFF, 0xD0]); // call rax
     code.extend_from_slice(&[0x48, 0x8B, 0x44, 0x24, 0x30]); // mov rax, [rsp+0x30]
     code.extend_from_slice(&[0x48, 0x85, 0xC0]); // test rax, rax
-    code.extend_from_slice(&[0x75, 0x25]); // jne +0x25 (skip RtlCreateHeap fallback)
+    code.extend_from_slice(&[0x75, 0x3A]); // jne +0x3A (skip RtlCreateHeap fallback)
 
     code.extend_from_slice(&[0xB9, 0x02, 0x00, 0x00, 0x00]); // mov ecx, 2 (HEAP_GROWABLE)
     code.extend_from_slice(&[0x48, 0x31, 0xD2]); // xor rdx, rdx
