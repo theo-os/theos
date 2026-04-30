@@ -8,17 +8,17 @@ Theos is a Windows NT-compatible kernel written in Rust (2024 edition) targeting
 
 ## Build system
 
-The project uses **Buck2** (not Cargo) with reindeer for dependency management. Standard `cargo build` will not work.
+The project uses **Bazel 9.1.0** with bzlmod for dependency management. Standard `cargo build` will not work.
 
 ```bash
 # Build everything
-buck2 build //...
+bazel build //...
 
 # Run in QEMU
-buck2 run //:run
+bazel run //:run
 
 # Run with custom options
-QEMU_MEM=1G ROOTFS_PROFILE=auto buck2 run //:run
+QEMU_MEM=1G ROOTFS_PROFILE=auto bazel run //:run
 ```
 
 Key runtime env vars: `KERNEL_INIT`, `KERNEL_ROOT`, `KERNEL_ROOTFSTYPE`, `KERNEL_CMDLINE`, `ROOTFS_SIZE_MIB`, `ROOTFS_PROFILE` (auto/lite/real), `QEMU_MEM` (default 512M), `ROOTFS_ISO`, `ARCH`.
@@ -29,7 +29,7 @@ There is currently no linting workflow.
 
 ## Testing
 
-There is no formal test suite. Testing is done by running the kernel in QEMU via `buck2 run //:run` and observing behavior. CI only runs `buck2 build //...`.
+There is no formal test suite. Testing is done by running the kernel in QEMU via `bazel run //:run` and observing behavior. CI only runs `bazel build //...`.
 
 ## Architecture
 
@@ -70,5 +70,5 @@ Minimal Windows userspace compiled with clang targeting `x86_64-pc-windows-msvc`
 
 - All kernel code is `#![no_std]`; library crates use `std` feature gates where needed
 - Rust 2024 edition throughout (requires nightly)
-- Buck2 workspace cells: root, prelude, toolchains, third-party — dependency changes go through reindeer
+- Bazel workspace packages: root, toolchains, third-party
 - The repo uses Jujutsu (`jj`) alongside git; the development branch is `canon`

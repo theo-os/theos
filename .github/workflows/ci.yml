@@ -14,17 +14,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install Watchman
+      - name: Install Bazelisk
+        uses: bazelbuild/setup-bazelisk@v3
+      - name: Install LLVM Tools
         run: |
           sudo apt update -y
-          sudo apt install -y watchman
-      - name: Install Buck2
-        uses: dtolnay/install-buck2@latest
-      - name: Install Nightly Rust
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: rustfmt, clippy, rust-src
-          targets: x86_64-unknown-uefi
-      - name: Build Buck2 Targets
+          sudo apt install -y clang lld
+      - name: Build Bazel Targets
         run: |
-          buck2 build //...
+          bazel build //...

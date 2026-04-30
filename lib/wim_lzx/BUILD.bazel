@@ -1,0 +1,12 @@
+package(default_visibility = ["//visibility:public"])
+
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+rust_library(
+    name = "wim_lzx",
+    srcs = glob(["**/*.rs"]),
+    crate_root = "lib.rs",
+    crate_name = "wim_lzx",
+    edition = "2024",
+    deps = [],
+)

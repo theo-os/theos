@@ -1,0 +1,14 @@
+package(default_visibility = ["//visibility:public"])
+
+load("//userspace/native_init:native_init.bzl", "native_init")
+
+native_init(
+    name = "native_init",
+    init_c = "init.c",
+    child_c = "child.c",
+    init_reloc_c = "init_reloc.c",
+    ntdll_def = "ntdll.def",
+    ntdll_reloc_c = "ntdll_reloc.c",
+    syscall_stubs_s = "syscall_stubs.S",
+    ntdll_stubs_s = "ntdll_stubs.S",
+)

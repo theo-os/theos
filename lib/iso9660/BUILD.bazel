@@ -1,0 +1,14 @@
+package(default_visibility = ["//visibility:public"])
+
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+rust_library(
+    name = "iso9660",
+    srcs = glob(["**/*.rs"]),
+    crate_root = "lib.rs",
+    crate_name = "iso9660",
+    edition = "2024",
+    deps = [
+        "@crates//:byteorder",
+    ],
+)

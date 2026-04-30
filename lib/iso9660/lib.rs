@@ -2,18 +2,40 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
-use thiserror::Error;
+use std::fmt;
 
 const SECTOR_SIZE: u64 = 2048;
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum Error {
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("not a valid ISO 9660 image")]
+    Io(std::io::Error),
     InvalidImage,
-    #[error("path not found in ISO image: {0}")]
     FileNotFound(String),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(err) => write!(f, "I/O error: {err}"),
+            Self::InvalidImage => f.write_str("not a valid ISO 9660 image"),
+            Self::FileNotFound(path) => write!(f, "path not found in ISO image: {path}"),
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(value: std::io::Error) -> Self {
+        Self::Io(value)
+    }
 }
 
 pub struct FileReader {

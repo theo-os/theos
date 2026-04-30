@@ -1,0 +1,39 @@
+package(default_visibility = ["//visibility:public"])
+
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+filegroup(
+    name = "ovmf_firmware",
+    srcs = ["DEBUGX64_OVMF.fd"],
+)
+
+rust_binary(
+    name = "run",
+    srcs = ["tools/run.rs"],
+    crate_root = "tools/run.rs",
+    crate_name = "run",
+    edition = "2024",
+    data = [
+        ":ovmf_firmware",
+        "//kernel:kernel_artifact",
+        "//tools/mkrootfs:mkrootfs",
+        "//tools/wimunpack:wimunpack",
+        "//userspace/native_init:native_init",
+        "tools/windows-rootfs-real.txt",
+        "tools/windows-rootfs.txt",
+    ],
+    env = {
+        "BAZEL_OVMF_FD": "$(location :ovmf_firmware)",
+        "BAZEL_KERNEL_BIN": "$(location //kernel:kernel_artifact)",
+        "BAZEL_MKROOTFS_BIN": "$(location //tools/mkrootfs:mkrootfs)",
+        "BAZEL_NATIVE_INIT_DIR": "$(location //userspace/native_init:native_init)",
+        "BAZEL_WIMUNPACK_BIN": "$(location //tools/wimunpack:wimunpack)",
+    },
+)
+
+genrule(
+    name = "kernel_artifact",
+    outs = ["kernel.efi"],
+    cmd = "cp $(location //kernel:kernel) $@",
+    tools = ["//kernel:kernel"],
+)

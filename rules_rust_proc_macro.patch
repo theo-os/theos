@@ -1,0 +1,11 @@
+--- rust/private/utils.bzl
++++ rust/private/utils.bzl
+@@ -824,6 +824,8 @@
+     prefix = ""
+     if crate_type in ("dylib", "cdylib", "proc-macro"):
+         extension = toolchain.dylib_ext
++        if crate_type == "proc-macro" and not extension:
++            extension = ".so"
+     elif crate_type == "staticlib":
+         extension = toolchain.staticlib_ext
+     elif crate_type in ("lib", "rlib"):

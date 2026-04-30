@@ -16,13 +16,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let root = env::current_dir()?;
-    let ovmf_fd = required_env_path("BUCK_OVMF_FD")?;
-    let kernel_bin = required_env_path("BUCK_KERNEL_BIN")?;
-    let mkrootfs_bin = required_env_path("BUCK_MKROOTFS_BIN")?;
-    let wimunpack_bin = required_env_path("BUCK_WIMUNPACK_BIN")?;
-    let native_init_exe = required_env_path("BUCK_NATIVE_INIT_EXE")?;
-    let child_exe = required_env_path("BUCK_CHILD_EXE")?;
-    let ntdll_dll = required_env_path("BUCK_NTDLL_DLL")?;
+    let ovmf_fd = required_env_path("BAZEL_OVMF_FD")?;
+    let kernel_bin = required_env_path("BAZEL_KERNEL_BIN")?;
+    let mkrootfs_bin = required_env_path("BAZEL_MKROOTFS_BIN")?;
+    let wimunpack_bin = required_env_path("BAZEL_WIMUNPACK_BIN")?;
+    let native_init_dir = required_env_path("BAZEL_NATIVE_INIT_DIR")?;
+    let native_init_exe = native_init_dir.join("init.exe");
+    let child_exe = native_init_dir.join("child.exe");
+    let ntdll_dll = native_init_dir.join("ntdll.dll");
 
     let rootfs_img = root.join("rootfs.img");
     let efi_root = root.join("efi_root");
@@ -52,7 +53,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
 
     if let Some(path) = env::var_os("KERNEL_RUSTFLAGS") {
-        eprintln!("warning: KERNEL_RUSTFLAGS is ignored by the Buck2 build");
+        eprintln!("warning: KERNEL_RUSTFLAGS is ignored by the Bazel build");
         drop(path);
     }
 
@@ -111,7 +112,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         || env::var_os("KERNEL_ROOTFSTYPE").is_some()
         || env::var_os("KERNEL_CMDLINE").is_some()
     {
-        eprintln!("warning: direct UEFI boot ignores kernel cmdline settings in the Buck runner");
+        eprintln!("warning: direct UEFI boot ignores kernel cmdline settings in the Bazel runner");
     }
 
     let mut qemu_args = vec![
@@ -147,7 +148,7 @@ fn env_path(name: &str) -> Option<PathBuf> {
 
 fn required_env_path(name: &str) -> Result<PathBuf, Box<dyn Error>> {
     env_path(name).ok_or_else(|| {
-        format!("missing {name}; run this binary through buck2 so artifact paths are injected")
+        format!("missing {name}; run this binary through bazel so artifact paths are injected")
             .into()
     })
 }

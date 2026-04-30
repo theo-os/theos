@@ -1,0 +1,22 @@
+package(default_visibility = ["//visibility:public"])
+
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+rust_library(
+    name = "crabfs",
+    srcs = glob(["**/*.rs"]),
+    crate_root = "lib.rs",
+    crate_name = "crabfs",
+    edition = "2024",
+    deps = [],
+)
+
+rust_library(
+    name = "crabfs_std",
+    srcs = glob(["**/*.rs"]),
+    crate_root = "lib.rs",
+    crate_name = "crabfs",
+    edition = "2024",
+    crate_features = ["std"],
+    deps = [],
+)

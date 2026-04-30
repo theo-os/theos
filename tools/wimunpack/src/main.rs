@@ -1,11 +1,10 @@
-use binrw::{binrw, BinReaderExt};
 use clap::Parser;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::{create_dir_all, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use thiserror::Error;
+use std::fmt;
 
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
 const WIM_DENTRY_DISK_SIZE: usize = 102;
@@ -30,31 +29,43 @@ struct Args {
     include_list: Option<PathBuf>,
 }
 
-#[derive(Error, Debug)]
+#[derive(Debug)]
 enum WimUnpackError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("ISO parse error: {0}")]
+    Io(std::io::Error),
     Iso(String),
-    #[error("WIM parse error: {0}")]
     Wim(String),
-    #[error("File not found in ISO: {0}")]
     FileNotFound(String),
-    #[error("BinRead error: {0}")]
-    BinRead(String),
-    #[error("Decompression error: {0}")]
     Decompression(String),
 }
 
-impl From<binrw::Error> for WimUnpackError {
-    fn from(err: binrw::Error) -> Self {
-        WimUnpackError::BinRead(format!("{:?}", err))
+impl fmt::Display for WimUnpackError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(err) => write!(f, "IO error: {err}"),
+            Self::Iso(err) => write!(f, "ISO parse error: {err}"),
+            Self::Wim(err) => write!(f, "WIM parse error: {err}"),
+            Self::FileNotFound(path) => write!(f, "File not found in ISO: {path}"),
+            Self::Decompression(err) => write!(f, "Decompression error: {err}"),
+        }
     }
 }
 
-#[binrw]
+impl std::error::Error for WimUnpackError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for WimUnpackError {
+    fn from(value: std::io::Error) -> Self {
+        Self::Io(value)
+    }
+}
+
 #[derive(Debug)]
-#[br(little)]
 struct WimHeader {
     image_tag: [u8; 8],
     size: u32,
@@ -70,13 +81,10 @@ struct WimHeader {
     boot_metadata: ResEntry,
     boot_index: u32,
     integrity: ResEntry,
-    #[br(pad_before = 60)]
     _unused: (),
 }
 
-#[binrw]
 #[derive(Debug, Clone, Copy)]
-#[br(little)]
 struct ResEntry {
     size_flags: u64,
     offset: u64,
@@ -101,14 +109,73 @@ impl ResEntry {
     }
 }
 
-#[binrw]
 #[derive(Debug, Clone)]
-#[br(little)]
 struct LookupEntry {
     res_entry: ResEntry,
     part_number: u16,
     ref_count: u32,
     hash: [u8; 20],
+}
+
+fn read_exact_array<const N: usize, R: Read>(
+    reader: &mut R,
+) -> Result<[u8; N], WimUnpackError> {
+    let mut buf = [0u8; N];
+    reader.read_exact(&mut buf)?;
+    Ok(buf)
+}
+
+fn read_u16_from_reader<R: Read>(reader: &mut R) -> Result<u16, WimUnpackError> {
+    Ok(u16::from_le_bytes(read_exact_array(reader)?))
+}
+
+fn read_u32_from_reader<R: Read>(reader: &mut R) -> Result<u32, WimUnpackError> {
+    Ok(u32::from_le_bytes(read_exact_array(reader)?))
+}
+
+fn read_u64_from_reader<R: Read>(reader: &mut R) -> Result<u64, WimUnpackError> {
+    Ok(u64::from_le_bytes(read_exact_array(reader)?))
+}
+
+fn read_res_entry<R: Read>(reader: &mut R) -> Result<ResEntry, WimUnpackError> {
+    Ok(ResEntry {
+        size_flags: read_u64_from_reader(reader)?,
+        offset: read_u64_from_reader(reader)?,
+        original_size: read_u64_from_reader(reader)?,
+    })
+}
+
+fn read_wim_header<R: Read>(reader: &mut R) -> Result<WimHeader, WimUnpackError> {
+    Ok(WimHeader {
+        image_tag: read_exact_array(reader)?,
+        size: read_u32_from_reader(reader)?,
+        version: read_u32_from_reader(reader)?,
+        flags: read_u32_from_reader(reader)?,
+        compression_size: read_u32_from_reader(reader)?,
+        guid: read_exact_array(reader)?,
+        part_number: read_u16_from_reader(reader)?,
+        total_parts: read_u16_from_reader(reader)?,
+        image_count: read_u32_from_reader(reader)?,
+        offset_table: read_res_entry(reader)?,
+        xml_data: read_res_entry(reader)?,
+        boot_metadata: read_res_entry(reader)?,
+        boot_index: read_u32_from_reader(reader)?,
+        integrity: read_res_entry(reader)?,
+        _unused: {
+            let mut unused = [0u8; 60];
+            reader.read_exact(&mut unused)?;
+            ()
+        },
+    })
+}
+
+fn read_lookup_entry<R: Read>(reader: &mut R) -> Result<LookupEntry, WimUnpackError> {
+    Ok(LookupEntry {
+        res_entry: read_res_entry(reader)?,
+        part_number: read_u16_from_reader(reader)?,
+        ref_count: read_u32_from_reader(reader)?,
+        hash: read_exact_array(reader)?,
+    })
 }
 
 fn main() -> Result<(), WimUnpackError> {
@@ -159,7 +226,7 @@ fn unpack_wim<R: Read + Seek>(
     include_paths: Option<&[String]>,
 ) -> Result<(), WimUnpackError> {
     wim.seek(SeekFrom::Start(0))?;
-    let header: WimHeader = wim.read_le()?;
+    let header = read_wim_header(wim)?;
     if &header.image_tag != b"MSWIM\0\0\0" {
         return Err(WimUnpackError::Wim("Not a valid MSWIM file".to_string()));
     }
@@ -167,10 +234,10 @@ fn unpack_wim<R: Read + Seek>(
     let lookup_data = read_resource(wim, &header.offset_table, header.compression_size)
         .map_err(|err| WimUnpackError::Wim(format!("failed to read lookup table: {}", err)))?;
     let mut lookup_table = Vec::new();
-    let mut lookup_reader = std::io::Cursor::new(&lookup_data);
+    let mut lookup_reader = std::io::Cursor::new(lookup_data.as_slice());
     let entry_count = header.offset_table.original_size / 50;
     for _ in 0..entry_count {
-        lookup_table.push(lookup_reader.read_le::<LookupEntry>()?);
+        lookup_table.push(read_lookup_entry(&mut lookup_reader)?);
     }
     let lookup_by_hash: HashMap<[u8; 20], LookupEntry> = lookup_table
         .iter()
@@ -371,7 +438,7 @@ fn read_dentry(metadata: &[u8], offset: u64) -> Result<Option<Dentry>, WimUnpack
 }
 
 fn read_resource<R: Read + Seek + ?Sized>(
-    mut wim: &mut R,
+    wim: &mut R,
     res: &ResEntry,
     chunk_size: u32,
 ) -> Result<Vec<u8>, WimUnpackError> {
@@ -394,9 +461,13 @@ fn read_resource<R: Read + Seek + ?Sized>(
     };
     for _ in 0..chunk_table_entries {
         if entry_size == 4 {
-            chunk_offsets.push(wim.read_le::<u32>()? as u64);
+            let mut buf = [0u8; 4];
+            wim.read_exact(&mut buf)?;
+            chunk_offsets.push(u32::from_le_bytes(buf) as u64);
         } else {
-            chunk_offsets.push(wim.read_le::<u64>()? as u64);
+            let mut buf = [0u8; 8];
+            wim.read_exact(&mut buf)?;
+            chunk_offsets.push(u64::from_le_bytes(buf));
         }
     }
 

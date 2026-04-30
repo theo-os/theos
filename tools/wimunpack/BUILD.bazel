@@ -1,0 +1,23 @@
+package(default_visibility = ["//visibility:public"])
+
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+rust_binary(
+    name = "wimunpack",
+    srcs = glob(["src/**/*.rs"]),
+    crate_root = "src/main.rs",
+    crate_name = "wimunpack",
+    edition = "2024",
+    deps = [
+        "//lib/iso9660:iso9660",
+        "//lib/udf:udf",
+        "//lib/wim_lzx:wim_lzx",
+        "@crates//:bitflags",
+        "@crates//:clap",
+        "@crates//:crc32fast",
+        "@crates//:flate2",
+        "@crates//:lz4_flex",
+        "@crates//:rayon",
+        "@crates//:sha1",
+    ],
+)

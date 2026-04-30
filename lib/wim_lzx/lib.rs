@@ -5,7 +5,6 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
-use thiserror::Error;
 
 const MAIN_CODE_COUNT: usize = 496;
 const MAIN_CODE_SPLIT: usize = 256;
@@ -34,11 +33,9 @@ const BASE_POSITION: [u16; 31] = [
     768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768,
 ];
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum Error {
-    #[error("WIM LZX data is corrupt")]
     Corrupt,
-    #[error("unexpected end of WIM LZX input at {context} (byte_offset={byte_offset}, bit_count={bit_count}, block_start={block_start}, block_type={block_type}, block_size={block_size})")]
     UnexpectedEof {
         context: &'static str,
         byte_offset: usize,
@@ -47,9 +44,32 @@ pub enum Error {
         block_type: u16,
         block_size: usize,
     },
-    #[error("uncompressed chunk size {0} exceeds 32768 bytes")]
     ChunkTooLarge(usize),
 }
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Corrupt => f.write_str("WIM LZX data is corrupt"),
+            Self::UnexpectedEof {
+                context,
+                byte_offset,
+                bit_count,
+                block_start,
+                block_type,
+                block_size,
+            } => write!(
+                f,
+                "unexpected end of WIM LZX input at {context} (byte_offset={byte_offset}, bit_count={bit_count}, block_start={block_start}, block_type={block_type}, block_size={block_size})"
+            ),
+            Self::ChunkTooLarge(size) => {
+                write!(f, "uncompressed chunk size {size} exceeds 32768 bytes")
+            }
+        }
+    }
+}
+
+impl core::error::Error for Error {}
 
 #[derive(Clone)]
 struct Huffman {

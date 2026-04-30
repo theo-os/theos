@@ -16,8 +16,15 @@ target/
 *.lib
 *.pdb
 /buck-out
+/bazel-bin
+/bazel-out
+/bazel-testlogs
+.bazelrc.user
+rust-project.json
+compile_commands.json
 .codex
 .rootfs-staging
 .rootfs-build.manifest
 .rootfs-extract.manifest
 .invest-*
+/third-party/patches

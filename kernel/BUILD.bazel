@@ -1,0 +1,43 @@
+package(default_visibility = ["//visibility:public"])
+
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+rust_binary(
+    name = "kernel",
+    srcs = glob(["*.rs"]),
+    crate_root = "kernel.rs",
+    crate_name = "kernel",
+    edition = "2024",
+    compile_data = [
+        "switch.s",
+    ],
+    linker_script = "linker.ld",
+    deps = [
+        "//lib/crabfs:crabfs",
+        "//lib/loader:loader",
+        "//lib/regf:regf",
+        "@crates//:bitflags",
+        "@crates//:goblin",
+        "@crates//:linked_list_allocator",
+        "@crates//:lz4_flex",
+        "@crates//:pic8259",
+        "@crates//:spin",
+        "@crates//:uefi",
+        "@crates//:x86_64",
+    ],
+    rustc_flags = [
+        "-C",
+        "relocation-model=static",
+        "-C",
+        "panic=abort",
+        "-C",
+        "linker=rust-lld",
+    ],
+)
+
+genrule(
+    name = "kernel_artifact",
+    srcs = [":kernel"],
+    outs = ["kernel.efi"],
+    cmd = "cp $(location :kernel) $@",
+)

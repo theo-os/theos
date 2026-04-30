@@ -1,0 +1,14 @@
+package(default_visibility = ["//visibility:public"])
+
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+rust_library(
+    name = "udf",
+    srcs = glob(["**/*.rs"]),
+    crate_root = "lib.rs",
+    crate_name = "udf",
+    edition = "2024",
+    deps = [
+        "@crates//:byteorder",
+    ],
+)

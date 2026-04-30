@@ -2,7 +2,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use std::fs::File;
 use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
-use thiserror::Error;
+use std::fmt;
 
 const SECTOR_SIZE: u64 = 2048;
 const TAGID_ANCHOR: u16 = 0x0002;
@@ -23,16 +23,38 @@ const ICBTAG_FLAG_AD_LONG: u16 = 0x0001;
 const ICBTAG_FLAG_AD_IN_ICB: u16 = 0x0003;
 const UDF_LENGTH_MASK: u32 = 0x3fff_ffff;
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum Error {
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("not a valid UDF image")]
+    Io(std::io::Error),
     InvalidImage,
-    #[error("unsupported UDF feature: {0}")]
     Unsupported(&'static str),
-    #[error("path not found in UDF image: {0}")]
     FileNotFound(String),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(err) => write!(f, "I/O error: {err}"),
+            Self::InvalidImage => f.write_str("not a valid UDF image"),
+            Self::Unsupported(feature) => write!(f, "unsupported UDF feature: {feature}"),
+            Self::FileNotFound(path) => write!(f, "path not found in UDF image: {path}"),
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(value: std::io::Error) -> Self {
+        Self::Io(value)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
