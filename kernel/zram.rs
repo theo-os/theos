@@ -402,9 +402,5 @@ fn pages_per_zspage(slot_size: usize) -> usize {
 }
 
 fn nonzero_generation(generation: u32) -> u32 {
-    if generation == 0 {
-        1
-    } else {
-        generation
-    }
+    if generation == 0 { 1 } else { generation }
 }

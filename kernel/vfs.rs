@@ -4,7 +4,7 @@ use crate::print;
 use crate::println;
 use crate::serial;
 use crate::virtio_blk::VirtioBlkDevice;
-use alloc::alloc::{alloc_zeroed, dealloc, Layout};
+use alloc::alloc::{Layout, alloc_zeroed, dealloc};
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -207,9 +207,10 @@ impl UefiAlignedBuffer {
         let ptr = uefi::boot::allocate_pages(
             uefi::boot::AllocateType::AnyPages,
             uefi::boot::MemoryType::LOADER_DATA,
-            pages
-        ).ok()?;
-        
+            pages,
+        )
+        .ok()?;
+
         Some(Self {
             ptr: ptr.cast(),
             len: pages * 4096,

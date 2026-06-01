@@ -2,12 +2,12 @@ extern crate alloc;
 
 use crate::{gdt, nt, println, user};
 use core::sync::atomic::{AtomicUsize, Ordering};
+use x86_64::VirtAddr;
 use x86_64::instructions::segmentation::Segment;
 use x86_64::registers::model_specific::{
     Efer, EferFlags, GsBase, KernelGsBase, LStar, SFMask, Star,
 };
 use x86_64::registers::rflags::RFlags;
-use x86_64::VirtAddr;
 
 use crate::smp::MAX_CPUS;
 
@@ -172,7 +172,9 @@ extern "sysv64" fn syscall_dispatch(frame: *mut SyscallFrame) -> usize {
     let frame = unsafe { &*frame };
     let result = match frame.nr {
         // Windows x64 native syscall compatibility for real ntdll stubs.
-        4 => user::wait_for_single_object(frame.r10, frame.rdx != 0, frame.r8 as *const i64) as usize,
+        4 => {
+            user::wait_for_single_object(frame.r10, frame.rdx != 0, frame.r8 as *const i64) as usize
+        }
         6 => user::read_file(
             frame.r10,
             stack_arg(frame, 0) as *mut nt::IoStatusBlock,
@@ -232,11 +234,8 @@ extern "sysv64" fn syscall_dispatch(frame: *mut SyscallFrame) -> usize {
             frame.r9 as u32,
             stack_arg(frame, 0) as *mut u32,
         ) as usize,
-        30 => user::free_virtual_memory(
-            frame.r10,
-            frame.rdx as *mut usize,
-            frame.r8 as *mut usize,
-        ) as usize,
+        30 => user::free_virtual_memory(frame.r10, frame.rdx as *mut usize, frame.r8 as *mut usize)
+            as usize,
         35 => user::query_virtual_memory(
             frame.r10,
             frame.rdx,
@@ -499,12 +498,7 @@ extern "sysv64" fn syscall_dispatch(frame: *mut SyscallFrame) -> usize {
             if seen < 128 {
                 println!(
                     "NT KERNEL: unknown syscall nr={} rcx={:#x} r10={:#x} rdx={:#x} r8={:#x} r9={:#x}",
-                    frame.nr,
-                    frame.rcx,
-                    frame.r10,
-                    frame.rdx,
-                    frame.r8,
-                    frame.r9
+                    frame.nr, frame.rcx, frame.r10, frame.rdx, frame.r8, frame.r9
                 );
             }
             nt::STATUS_NOT_IMPLEMENTED as usize

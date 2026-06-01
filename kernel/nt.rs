@@ -967,10 +967,7 @@ pub fn with_section<T>(object_id: u32, f: impl FnOnce(&SectionObject) -> T) -> R
     }
 }
 
-pub fn with_process<T>(
-    object_id: u32,
-    f: impl FnOnce(&ProcessObject) -> T,
-) -> Result<T, NtStatus> {
+pub fn with_process<T>(object_id: u32, f: impl FnOnce(&ProcessObject) -> T) -> Result<T, NtStatus> {
     let objects = OBJECTS.lock();
     let Some(record) = objects.objects.get(&object_id) else {
         return Err(STATUS_INVALID_HANDLE);

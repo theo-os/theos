@@ -12,24 +12,20 @@ The project uses **Buck2** (not Cargo) with reindeer for dependency management. 
 
 ```bash
 # Build everything
-buck2 build //...
+cargo xtask build
 
 # Run in QEMU
-buck2 run //:run
+cargo xtask run
 
 # Run with custom options
-QEMU_MEM=1G ROOTFS_PROFILE=auto buck2 run //:run
+QEMU_MEM=1G ROOTFS_PROFILE=auto cargo xtask run
 ```
 
 Key runtime env vars: `KERNEL_INIT`, `KERNEL_ROOT`, `KERNEL_ROOTFSTYPE`, `KERNEL_CMDLINE`, `ROOTFS_SIZE_MIB`, `ROOTFS_PROFILE` (auto/lite/real), `QEMU_MEM` (default 512M), `ROOTFS_ISO`, `ARCH`.
 
-## Linting / formatting
-
-There is currently no linting workflow.
-
 ## Testing
 
-There is no formal test suite. Testing is done by running the kernel in QEMU via `buck2 run //:run` and observing behavior. CI only runs `buck2 build //...`.
+There is no formal test suite. Testing is done by running the kernel in QEMU via and observing behavior. CI only runs the build task.
 
 ## Architecture
 

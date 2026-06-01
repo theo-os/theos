@@ -16,13 +16,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let root = env::current_dir()?;
-    let ovmf_fd = required_env_path("BUCK_OVMF_FD")?;
-    let kernel_bin = required_env_path("BUCK_KERNEL_BIN")?;
-    let mkrootfs_bin = required_env_path("BUCK_MKROOTFS_BIN")?;
-    let wimunpack_bin = required_env_path("BUCK_WIMUNPACK_BIN")?;
-    let native_init_exe = required_env_path("BUCK_NATIVE_INIT_EXE")?;
-    let child_exe = required_env_path("BUCK_CHILD_EXE")?;
-    let ntdll_dll = required_env_path("BUCK_NTDLL_DLL")?;
+    let target_dir = find_target_dir(&root);
+    let profile = env::var("CARGO_PROFILE").unwrap_or_else(|_| "debug".to_string());
+
+    // Artifacts can come from BUCK_ env vars (set by xtask) or from auto-discovery
+    let ovmf_fd = env_path("BUCK_OVMF_FD")
+        .or_else(|| resolve_ovmf(&root))
+        .ok_or("missing OVMF firmware; set BUCK_OVMF_FD or have OVMF.fd in system paths")?;
+    let kernel_bin = env_path("BUCK_KERNEL_BIN").unwrap_or_else(|| {
+        target_dir
+            .join("x86_64-unknown-uefi")
+            .join(&profile)
+            .join("kernel.efi")
+    });
+    let mkrootfs_bin =
+        env_path("BUCK_MKROOTFS_BIN").unwrap_or_else(|| target_dir.join(&profile).join("mkrootfs"));
+    let wimunpack_bin = env_path("BUCK_WIMUNPACK_BIN")
+        .unwrap_or_else(|| target_dir.join(&profile).join("wimunpack"));
+    let native_init_dir = target_dir.join("xtask/native_init");
+    let native_init_exe =
+        env_path("BUCK_NATIVE_INIT_EXE").unwrap_or_else(|| native_init_dir.join("init.exe"));
+    let child_exe = env_path("BUCK_CHILD_EXE").unwrap_or_else(|| native_init_dir.join("child.exe"));
+    let ntdll_dll = env_path("BUCK_NTDLL_DLL").unwrap_or_else(|| native_init_dir.join("ntdll.dll"));
 
     let rootfs_img = root.join("rootfs.img");
     let efi_root = root.join("efi_root");
@@ -145,11 +160,32 @@ fn env_path(name: &str) -> Option<PathBuf> {
     env::var_os(name).map(PathBuf::from)
 }
 
-fn required_env_path(name: &str) -> Result<PathBuf, Box<dyn Error>> {
-    env_path(name).ok_or_else(|| {
-        format!("missing {name}; run this binary through buck2 so artifact paths are injected")
-            .into()
-    })
+fn find_target_dir(root: &Path) -> PathBuf {
+    // Respect CARGO_TARGET_DIR if set, otherwise use <root>/target
+    env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("target"))
+}
+
+fn resolve_ovmf(root: &Path) -> Option<PathBuf> {
+    // Check for a local cached copy
+    let cached = root.join("target/xtask/OVMF.fd");
+    if cached.exists() {
+        return Some(cached);
+    }
+    // Check system paths
+    for path in &[
+        "/usr/share/ovmf/OVMF.fd",
+        "/usr/share/edk2/x64/OVMF.fd",
+        "/usr/share/edk2-ovmf/x64/OVMF.fd",
+        "/usr/share/qemu/ovmf-x86_64.bin",
+    ] {
+        let p = Path::new(path);
+        if p.exists() {
+            return Some(p.to_path_buf());
+        }
+    }
+    None
 }
 
 fn build_rootfs_from_dir(

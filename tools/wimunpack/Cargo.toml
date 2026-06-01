@@ -1,0 +1,23 @@
+[package]
+name = "wimunpack"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "wimunpack"
+path = "src/main.rs"
+
+[dependencies]
+iso9660 = { workspace = true }
+udf = { workspace = true }
+wim_lzx = { workspace = true }
+binrw = { workspace = true, features = ["std"] }
+bitflags = { workspace = true }
+clap = { workspace = true }
+crc32fast = { workspace = true }
+flate2 = { workspace = true }
+lz4_flex = { workspace = true }
+rayon = { workspace = true }
+sha1 = { workspace = true }
+thiserror = { workspace = true }

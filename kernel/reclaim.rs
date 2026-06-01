@@ -2,10 +2,10 @@ extern crate alloc;
 
 use crate::allocator::{self, VmError};
 use crate::zram::{self, ZramDevice, ZramError};
-use alloc::collections::{vec_deque::VecDeque, BTreeMap};
+use alloc::collections::{BTreeMap, vec_deque::VecDeque};
 use spin::{Lazy, Mutex};
-use x86_64::structures::paging::{Page, PageTableFlags, PhysFrame, Size4KiB};
 use x86_64::VirtAddr;
+use x86_64::structures::paging::{Page, PageTableFlags, PhysFrame, Size4KiB};
 
 const RECLAIM_START: usize = 0x_5555_0000_0000;
 const RECLAIM_MAX_PAGES: usize = 256;

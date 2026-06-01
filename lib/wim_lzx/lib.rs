@@ -25,20 +25,22 @@ const ALIGNED_OFFSET_BLOCK: u16 = 2;
 const UNCOMPRESSED_BLOCK: u16 = 3;
 
 const FOOTER_BITS: [u8; 31] = [
-    0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10,
-    11, 11, 12, 12, 13, 13, 14,
+    0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13,
+    13, 14,
 ];
 
 const BASE_POSITION: [u16; 31] = [
-    0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512,
-    768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768,
+    0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536,
+    2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768,
 ];
 
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("WIM LZX data is corrupt")]
     Corrupt,
-    #[error("unexpected end of WIM LZX input at {context} (byte_offset={byte_offset}, bit_count={bit_count}, block_start={block_start}, block_type={block_type}, block_size={block_size})")]
+    #[error(
+        "unexpected end of WIM LZX input at {context} (byte_offset={byte_offset}, bit_count={bit_count}, block_start={block_start}, block_type={block_type}, block_size={block_size})"
+    )]
     UnexpectedEof {
         context: &'static str,
         byte_offset: usize,
@@ -313,7 +315,11 @@ impl<'a> Decoder<'a> {
         match block_type {
             VERBATIM_BLOCK | ALIGNED_OFFSET_BLOCK => {}
             UNCOMPRESSED_BLOCK => {
-                let n = if self.bit_count == 0 { 16 } else { self.bit_count };
+                let n = if self.bit_count == 0 {
+                    16
+                } else {
+                    self.bit_count
+                };
                 self.get_bits(n)?;
                 self.ensure_at_least(12)?;
                 self.lru[0] = u32::from_le_bytes(
@@ -339,7 +345,10 @@ impl<'a> Decoder<'a> {
         Ok((block_type, block_size))
     }
 
-    fn read_trees(&mut self, read_aligned: bool) -> Result<(Huffman, Huffman, Option<Huffman>), Error> {
+    fn read_trees(
+        &mut self,
+        read_aligned: bool,
+    ) -> Result<(Huffman, Huffman, Option<Huffman>), Error> {
         let aligned = if read_aligned {
             let mut aligned_len = [0u8; 8];
             for elem in &mut aligned_len {
@@ -483,12 +492,8 @@ fn decode_e8(buffer: &mut [u8], offset: i64) {
     while i + 10 <= buffer.len() {
         if buffer[i] == 0xe8 {
             let current_ptr = offset as i32 + i as i32;
-            let absolute = i32::from_le_bytes([
-                buffer[i + 1],
-                buffer[i + 2],
-                buffer[i + 3],
-                buffer[i + 4],
-            ]);
+            let absolute =
+                i32::from_le_bytes([buffer[i + 1], buffer[i + 2], buffer[i + 3], buffer[i + 4]]);
             if absolute >= -current_ptr && absolute < E8_FILE_SIZE {
                 let relative = if absolute >= 0 {
                     absolute - current_ptr

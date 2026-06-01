@@ -5,7 +5,8 @@ use std::path::PathBuf;
 fn main() -> Result<(), String> {
     let args = parse_args()?;
     let size_bytes = args.size_mib * 1024 * 1024;
-    let mut dev = StdFileDevice::create(&args.output).map_err(|_| "failed to create image".to_string())?;
+    let mut dev =
+        StdFileDevice::create(&args.output).map_err(|_| "failed to create image".to_string())?;
     dev.set_len(size_bytes)
         .map_err(|_| "failed to resize image".to_string())?;
 
@@ -16,7 +17,9 @@ fn main() -> Result<(), String> {
             total_blocks: size_bytes / 4096,
             block_size: 4096,
             sector_size: 512,
-            uuid: [0x47, 0x45, 0x4e, 0x54, 0x4f, 0x4f, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1],
+            uuid: [
+                0x47, 0x45, 0x4e, 0x54, 0x4f, 0x4f, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1,
+            ],
         },
     )
     .map_err(|err| format!("pack failed: {err}"))?;

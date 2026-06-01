@@ -2,9 +2,9 @@ use crate::println;
 use core::arch::asm;
 use core::hint::spin_loop;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use x86_64::PhysAddr;
 use x86_64::registers::control::{Cr3, Cr3Flags};
 use x86_64::structures::paging::PhysFrame;
-use x86_64::{PhysAddr};
 
 pub const MAX_CPUS: usize = 32;
 
@@ -39,9 +39,9 @@ pub fn set_bsp_lapic_id(id: u32) {
 pub fn init() -> CpuTopology {
     let discovered = DISCOVERED_CPUS.load(Ordering::SeqCst);
     let bsp_id = BSP_LAPIC_ID.load(Ordering::SeqCst);
-    
+
     AP_READY[0].store(true, Ordering::SeqCst);
-    
+
     // Store current CR3 for APs
     let (frame, _) = Cr3::read();
     KERNEL_CR3.store(frame.start_address().as_u64(), Ordering::SeqCst);
@@ -49,7 +49,7 @@ pub fn init() -> CpuTopology {
     if discovered > 1 {
         println!("SMP: releasing {} APs...", discovered - 1);
         AP_START_SIGNAL.store(true, Ordering::SeqCst);
-        
+
         // Wait for APs to check in
         let mut checked_in = 0;
         for _ in 0..10_000_000 {
@@ -62,8 +62,11 @@ pub fn init() -> CpuTopology {
     }
 
     let online = ONLINE_CPUS.load(Ordering::SeqCst);
-    println!("SMP: {}/{} CPUs online, BSP lapic_id={}", online, discovered, bsp_id);
-    
+    println!(
+        "SMP: {}/{} CPUs online, BSP lapic_id={}",
+        online, discovered, bsp_id
+    );
+
     CpuTopology {
         discovered_cpus: discovered,
         online_cpus: online,
@@ -98,14 +101,14 @@ pub extern "efiapi" fn uefi_ap_entry(_arg: *mut core::ffi::c_void) {
     while !AP_START_SIGNAL.load(Ordering::SeqCst) {
         spin_loop();
     }
-    
+
     // Immediately switch to kernel page tables
     let kernel_cr3 = KERNEL_CR3.load(Ordering::SeqCst);
     if kernel_cr3 != 0 {
         unsafe {
             Cr3::write(
                 PhysFrame::containing_address(PhysAddr::new(kernel_cr3)),
-                Cr3Flags::empty()
+                Cr3Flags::empty(),
             );
         }
     }
@@ -116,17 +119,17 @@ pub extern "efiapi" fn uefi_ap_entry(_arg: *mut core::ffi::c_void) {
 
 fn ap_main() {
     let logical_id = ONLINE_CPUS.fetch_add(1, Ordering::SeqCst);
-    
+
     if logical_id < MAX_CPUS {
         let lapic_id = crate::apic::current_lapic_id().unwrap_or(logical_id as u32);
         LAPIC_IDS[logical_id].store(lapic_id, Ordering::SeqCst);
-        
+
         crate::gdt::init_for_cpu(logical_id);
         crate::idt::load_local();
         crate::init_local_cpu_features();
         crate::apic::init();
         crate::syscall::init_for_cpu(logical_id);
-        
+
         AP_READY[logical_id].store(true, Ordering::SeqCst);
     }
 

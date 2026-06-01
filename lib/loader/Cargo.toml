@@ -1,0 +1,12 @@
+[package]
+name = "loader"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "loader.rs"
+
+[dependencies]
+goblin = { workspace = true }
+thiserror = { workspace = true }

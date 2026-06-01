@@ -1,0 +1,12 @@
+[package]
+name = "mkrootfs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "mkrootfs"
+path = "src/main.rs"
+
+[dependencies]
+crabfs = { workspace = true, features = ["std"] }

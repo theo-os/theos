@@ -5,13 +5,13 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use spin::{Lazy, Mutex};
 #[cfg(target_os = "uefi")]
-use uefi::boot::{AllocateType};
-use uefi::mem::memory_map::MemoryMap as _;
+use uefi::boot::AllocateType;
 use uefi::boot::MemoryType;
+use uefi::mem::memory_map::MemoryMap as _;
 use x86_64::structures::paging::{
-    mapper::{FlagUpdateError, MapToError, UnmapError},
     FrameAllocator, Mapper as _, OffsetPageTable, Page, PageSize, PageTableFlags, PhysFrame,
     Size4KiB,
+    mapper::{FlagUpdateError, MapToError, UnmapError},
 };
 use x86_64::{PhysAddr, VirtAddr};
 
@@ -109,8 +109,8 @@ unsafe impl FrameAllocator<Size4KiB> for UefiFrameAllocator {
             return Some(frame);
         }
 
-        let phys = uefi::boot::allocate_pages(AllocateType::AnyPages, MemoryType::LOADER_DATA, 1)
-            .ok()?;
+        let phys =
+            uefi::boot::allocate_pages(AllocateType::AnyPages, MemoryType::LOADER_DATA, 1).ok()?;
         let addr = phys.as_ptr() as u64;
         if addr < Size4KiB::SIZE {
             return self.allocate_frame();

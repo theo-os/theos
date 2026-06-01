@@ -1,9 +1,9 @@
 use crate::println;
 use pic8259::ChainedPics;
 use spin::Lazy;
+use x86_64::VirtAddr;
 use x86_64::instructions::port::Port;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
-use x86_64::VirtAddr;
 
 pub const PIC_1_OFFSET: u8 = 32;
 pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;

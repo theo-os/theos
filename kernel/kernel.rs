@@ -35,15 +35,15 @@ use core::{arch::asm, panic::PanicInfo};
 #[cfg(target_os = "uefi")]
 use uefi::Identify;
 #[cfg(target_os = "uefi")]
+use uefi::boot::{EventType, SearchType, Tpl};
+#[cfg(target_os = "uefi")]
 use uefi::proto::loaded_image::LoadedImage;
 #[cfg(target_os = "uefi")]
 use uefi::proto::media::block::BlockIO;
 #[cfg(target_os = "uefi")]
-use uefi::boot::{SearchType, EventType, Tpl};
-#[cfg(target_os = "uefi")]
 use uefi::proto::pi::mp::MpServices;
 use x86_64::registers::control::{Cr0, Cr0Flags, Cr3, Cr3Flags, Cr4, Cr4Flags};
-use x86_64::structures::paging::{PhysFrame};
+use x86_64::structures::paging::PhysFrame;
 use x86_64::{PhysAddr, VirtAddr};
 
 pub struct BootInfo {
@@ -84,11 +84,11 @@ fn efi_main() -> uefi::Status {
     let early_heap_size = 16 * 1024 * 1024; // 16 MiB
     let heap_pages = (early_heap_size + 4095) / 4096;
     let heap_ptr = uefi::boot::allocate_pages(
-            uefi::boot::AllocateType::AnyPages,
-            uefi::boot::MemoryType::LOADER_DATA,
-            heap_pages,
-        )
-        .expect("Failed to allocate heap pages from UEFI");
+        uefi::boot::AllocateType::AnyPages,
+        uefi::boot::MemoryType::LOADER_DATA,
+        heap_pages,
+    )
+    .expect("Failed to allocate heap pages from UEFI");
 
     unsafe {
         allocator::ALLOCATOR
@@ -99,30 +99,32 @@ fn efi_main() -> uefi::Status {
 
     println!(
         "NT KERNEL: Early heap initialized via UEFI at {:p} ({} bytes)",
-        heap_ptr.as_ptr(), early_heap_size
+        heap_ptr.as_ptr(),
+        early_heap_size
     );
 
     // Create a new L4 page table to avoid modifying UEFI's potentially read-only L4
     let new_l4_ptr = uefi::boot::allocate_pages(
         uefi::boot::AllocateType::AnyPages,
         uefi::boot::MemoryType::LOADER_DATA,
-        1
-    ).expect("Failed to allocate new L4");
+        1,
+    )
+    .expect("Failed to allocate new L4");
     let new_l4_addr = new_l4_ptr.as_ptr() as u64;
-    
+
     unsafe {
         // Zero it out
         core::ptr::write_bytes(new_l4_addr as *mut u8, 0, 4096);
-        
+
         // Copy current L4 entries to maintain identity mapping and UEFI environment
         let (current_l4_frame, _) = Cr3::read();
         let current_l4_ptr = current_l4_frame.start_address().as_u64() as *const u8;
         core::ptr::copy_nonoverlapping(current_l4_ptr, new_l4_addr as *mut u8, 4096);
-        
+
         // Switch to the new, writable L4
         Cr3::write(
             PhysFrame::containing_address(PhysAddr::new(new_l4_addr)),
-            Cr3Flags::empty()
+            Cr3Flags::empty(),
         );
     }
 
@@ -134,18 +136,19 @@ fn efi_main() -> uefi::Status {
                 if let Ok(pi) = mp.get_processor_info(0) {
                     smp::set_bsp_lapic_id(pi.location.thread); // In QEMU thread is often lapic_id
                 }
-                
+
                 if count.total > 1 {
                     println!("NT KERNEL: starting {} APs via UEFI...", count.total - 1);
-                    
+
                     // Create an event for non-blocking AP startup to avoid hang
                     let event = unsafe {
                         uefi::boot::create_event(
                             EventType::empty(),
                             Tpl::CALLBACK,
                             None,
-                            None // notify_context
-                        ).ok()
+                            None, // notify_context
+                        )
+                        .ok()
                     };
 
                     let _ = mp.startup_all_aps(
@@ -153,7 +156,7 @@ fn efi_main() -> uefi::Status {
                         smp::uefi_ap_entry,
                         core::ptr::null_mut(),
                         event,
-                        None
+                        None,
                     );
                 }
             }
@@ -171,7 +174,7 @@ fn efi_main() -> uefi::Status {
     install_uefi_root_device(handle);
 
     // Transition to the kernel
-    println!("Transitioning to kernel..."); 
+    println!("Transitioning to kernel...");
 
     kernel_main(BootInfo {
         hhdm_offset: VirtAddr::new(0), // UEFI identity maps by default
@@ -180,13 +183,10 @@ fn efi_main() -> uefi::Status {
 }
 
 #[cfg(target_os = "uefi")]
-fn install_uefi_root_device(
-    image_handle: uefi::Handle,
-) {
+fn install_uefi_root_device(image_handle: uefi::Handle) {
     const CRABFS_SUPERBLOCK_MAGIC: [u8; 4] = *b"XFSB";
 
-    let Ok(loaded_image) = uefi::boot::open_protocol_exclusive::<LoadedImage>(image_handle)
-    else {
+    let Ok(loaded_image) = uefi::boot::open_protocol_exclusive::<LoadedImage>(image_handle) else {
         println!("NT KERNEL: failed to open LoadedImage protocol");
         return;
     };
@@ -202,8 +202,7 @@ fn install_uefi_root_device(
     let mut best: Option<(*mut BlockIO, u32, usize, usize, u64)> = None;
     for (i, handle) in handles.iter().copied().enumerate() {
         let is_boot = Some(handle) == boot_device;
-        let Ok(block_io) = uefi::boot::open_protocol_exclusive::<BlockIO>(handle)
-        else {
+        let Ok(block_io) = uefi::boot::open_protocol_exclusive::<BlockIO>(handle) else {
             continue;
         };
         let media = block_io.media();
@@ -221,7 +220,14 @@ fn install_uefi_root_device(
         }
         println!(
             "NT KERNEL: probing disk #{} (media_id={} blocks={} is_boot={}) magic={:02x}{:02x}{:02x}{:02x}",
-            i, media_id, last_block + 1, is_boot, sector0[0], sector0[1], sector0[2], sector0[3]
+            i,
+            media_id,
+            last_block + 1,
+            is_boot,
+            sector0[0],
+            sector0[1],
+            sector0[2],
+            sector0[3]
         );
         if sector0[..4] != CRABFS_SUPERBLOCK_MAGIC {
             continue;
@@ -272,7 +278,7 @@ pub extern "C" fn kernel_main(boot_info: BootInfo) -> ! {
     let mut reclaim_demo_base = None;
     let physical_memory_offset = boot_info.hhdm_offset;
     apic::set_hhdm_offset(physical_memory_offset);
-    
+
     let mut mapper = unsafe { paging::init(physical_memory_offset) };
     if let Some(mmap) = boot_info.memory_map {
         let mut frame_allocator = allocator::BootInfoFrameAllocator::init_from_uefi(&mmap);

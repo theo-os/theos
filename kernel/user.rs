@@ -3,28 +3,26 @@ extern crate alloc;
 use crate::nt::{
     self, AccessMask, ClientId, FilePositionInformation, FileStandardInformation, Handle,
     IoStatusBlock, LdrDataTableEntry, ListEntry, NtStatus, ObjectAttributes, Peb, PebLdrData,
-    ProcessBasicInformation,
-    RtlCriticalSection, RtlUserProcessParameters, Teb, UnicodeString, STATUS_ACCESS_DENIED,
-    STATUS_BUFFER_TOO_SMALL,
-    STATUS_CONFLICTING_ADDRESSES, STATUS_END_OF_FILE, STATUS_INFO_LENGTH_MISMATCH,
-    STATUS_INVALID_HANDLE, STATUS_INVALID_IMAGE_FORMAT, STATUS_INVALID_PARAMETER,
-    STATUS_NOT_IMPLEMENTED, STATUS_NOT_SUPPORTED, STATUS_NO_MEMORY, STATUS_OBJECT_NAME_NOT_FOUND,
-    STATUS_OBJECT_TYPE_MISMATCH, STATUS_PENDING, STATUS_SUCCESS, STATUS_TIMEOUT,
-    STATUS_UNSUCCESSFUL,
+    ProcessBasicInformation, RtlCriticalSection, RtlUserProcessParameters, STATUS_ACCESS_DENIED,
+    STATUS_BUFFER_TOO_SMALL, STATUS_CONFLICTING_ADDRESSES, STATUS_END_OF_FILE,
+    STATUS_INFO_LENGTH_MISMATCH, STATUS_INVALID_HANDLE, STATUS_INVALID_IMAGE_FORMAT,
+    STATUS_INVALID_PARAMETER, STATUS_NO_MEMORY, STATUS_NOT_IMPLEMENTED, STATUS_NOT_SUPPORTED,
+    STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_TYPE_MISMATCH, STATUS_PENDING, STATUS_SUCCESS,
+    STATUS_TIMEOUT, STATUS_UNSUCCESSFUL, Teb, UnicodeString,
 };
 use crate::vfs;
 use crate::{allocator, gdt, kdebug, println, process, smp::MAX_CPUS};
 use alloc::collections::BTreeMap;
 use alloc::format;
-use alloc::sync::Arc;
 use alloc::string::{String, ToString};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use goblin::pe::PE;
 use spin::{Lazy, Mutex};
+use x86_64::VirtAddr;
 use x86_64::registers::control::Cr3;
 use x86_64::registers::model_specific::{FsBase, GsBase};
 use x86_64::structures::paging::{Page, PageSize, PageTable, PageTableFlags, PhysFrame, Size4KiB};
-use x86_64::VirtAddr;
 
 const PAGE_SIZE: u64 = Size4KiB::SIZE;
 const LOW_KERNEL_IDENTITY_LIMIT: u64 = 0x1_0000_0000;
@@ -101,7 +99,6 @@ struct ModuleTemplate {
     exports_by_name: Arc<[(String, TemplateExportTarget)]>,
     exports_by_ordinal: Arc<[(usize, TemplateExportTarget)]>,
 }
-
 
 #[derive(Debug, Clone)]
 struct LoadedModule {
@@ -334,10 +331,7 @@ fn copy_page_table_frame(
     Ok(dst_frame)
 }
 
-fn mark_user_shared_data_page(
-    offset: VirtAddr,
-    new_pdpt: &mut PageTable,
-) -> Result<(), NtStatus> {
+fn mark_user_shared_data_page(offset: VirtAddr, new_pdpt: &mut PageTable) -> Result<(), NtStatus> {
     let shared = USER_SHARED_DATA_BASE;
     let pdpt_idx = pdpt_index(shared);
     let mut pdpt_entry = new_pdpt[pdpt_idx].clone();
@@ -365,10 +359,8 @@ fn mark_user_shared_data_page(
         new_pdpt[pdpt_idx].set_addr(pd_frame.start_address(), flags);
         pdpt_entry = new_pdpt[pdpt_idx].clone();
     } else {
-        let cloned_pd = copy_page_table_frame(
-            offset,
-            PhysFrame::containing_address(pdpt_entry.addr()),
-        )?;
+        let cloned_pd =
+            copy_page_table_frame(offset, PhysFrame::containing_address(pdpt_entry.addr()))?;
         let mut flags = pdpt_entry.flags();
         flags |= PageTableFlags::USER_ACCESSIBLE;
         new_pdpt[pdpt_idx].set_addr(cloned_pd.start_address(), flags);
@@ -470,8 +462,7 @@ fn clone_low_identity_pml4_slot(
 
     let new_pdpt_ptr =
         (offset.as_u64() + new_pdpt_frame.start_address().as_u64()) as *mut PageTable;
-    let current_pdpt_ptr =
-        (offset.as_u64() + current_entry.addr().as_u64()) as *const PageTable;
+    let current_pdpt_ptr = (offset.as_u64() + current_entry.addr().as_u64()) as *const PageTable;
     unsafe {
         let new_pdpt = &mut *new_pdpt_ptr;
         let current_pdpt = &*current_pdpt_ptr;
@@ -1918,7 +1909,10 @@ pub fn query_system_information(
                 let write_u64 = |offset: usize, value: u64| {
                     (system_information.add(offset) as *mut u64).write_unaligned(value);
                 };
-                write_u64(0x00, (process::global_tick() as u64) * (SCHED_TICK_100NS as u64));
+                write_u64(
+                    0x00,
+                    (process::global_tick() as u64) * (SCHED_TICK_100NS as u64),
+                );
                 write_u64(0x08, 0);
                 write_u64(0x10, 0);
                 write_u64(0x18, 0);
@@ -2386,7 +2380,14 @@ pub fn create_user_process(
             .iter()
             .filter_map(|entry| entry.map(|entry| entry.object_id))
             .collect();
-        cleanup_failed_spawn(pid, asid, task_id, process_object, thread_object, object_ids);
+        cleanup_failed_spawn(
+            pid,
+            asid,
+            task_id,
+            process_object,
+            thread_object,
+            object_ids,
+        );
         return status;
     }
 
@@ -2398,7 +2399,14 @@ pub fn create_user_process(
                 .iter()
                 .filter_map(|entry| entry.map(|entry| entry.object_id))
                 .collect();
-            cleanup_failed_spawn(pid, asid, task_id, process_object, thread_object, object_ids);
+            cleanup_failed_spawn(
+                pid,
+                asid,
+                task_id,
+                process_object,
+                thread_object,
+                object_ids,
+            );
             return status;
         }
     };
@@ -2436,15 +2444,17 @@ pub fn create_user_process(
         }
     };
 
-    process::SCHEDULER.lock().add_task(process::Task::with_initial_context(
-        task_id,
-        0,
-        init_ctx,
-        process::SchedParams {
-            process_id: pid,
-            ..process::SchedParams::default()
-        },
-    ));
+    process::SCHEDULER
+        .lock()
+        .add_task(process::Task::with_initial_context(
+            task_id,
+            0,
+            init_ctx,
+            process::SchedParams {
+                process_id: pid,
+                ..process::SchedParams::default()
+            },
+        ));
 
     let process_handle = match install_handle(process_object, nt::PROCESS_ALL_ACCESS) {
         Ok(handle) => handle,
@@ -2515,15 +2525,17 @@ pub fn create_thread_ex(
         ..process::SavedTaskContext::default()
     };
 
-    process::SCHEDULER.lock().add_task(process::Task::with_initial_context(
-        task_id,
-        0,
-        ctx,
-        process::SchedParams {
-            process_id: pid,
-            ..process::SchedParams::default()
-        },
-    ));
+    process::SCHEDULER
+        .lock()
+        .add_task(process::Task::with_initial_context(
+            task_id,
+            0,
+            ctx,
+            process::SchedParams {
+                process_id: pid,
+                ..process::SchedParams::default()
+            },
+        ));
 
     let handle = match install_handle(thread_object, nt::THREAD_ALL_ACCESS) {
         Ok(handle) => handle,
@@ -2774,11 +2786,7 @@ fn install_startup_bootstrap(peb_addr: u64, entry_rip: u64) -> Result<u64, NtSta
     code.extend_from_slice(&[0xFF, 0xE0]); // jmp rax
 
     unsafe {
-        core::ptr::copy_nonoverlapping(
-            code.as_ptr(),
-            USER_BOOTSTRAP_BASE as *mut u8,
-            code.len(),
-        );
+        core::ptr::copy_nonoverlapping(code.as_ptr(), USER_BOOTSTRAP_BASE as *mut u8, code.len());
     }
     Ok(USER_BOOTSTRAP_BASE)
 }
@@ -2951,7 +2959,10 @@ fn build_module_template(nt_path: &str, bytes: &[u8]) -> Result<ModuleTemplate, 
         size_of_image,
         size_of_headers,
         entry_rva: pe.entry as u32,
-        dll_name: pe.name.unwrap_or(module_basename(nt_path)).to_ascii_lowercase(),
+        dll_name: pe
+            .name
+            .unwrap_or(module_basename(nt_path))
+            .to_ascii_lowercase(),
         has_relocations: pe.relocation_data.is_some(),
         headers: Arc::<[u8]>::from(&bytes[..size_of_headers.min(bytes.len())]),
         sections: sections.into(),
@@ -2978,7 +2989,11 @@ fn load_pe_image(nt_path: &str, template: &ModuleTemplate) -> Result<LoadedImage
             }
         }
     } else {
-        match map_region_exact(template.preferred_base, template.size_of_image, nt::PAGE_READWRITE) {
+        match map_region_exact(
+            template.preferred_base,
+            template.size_of_image,
+            nt::PAGE_READWRITE,
+        ) {
             Ok(()) => template.preferred_base,
             Err(STATUS_CONFLICTING_ADDRESSES) => {
                 if !template.has_relocations {
@@ -3093,10 +3108,13 @@ fn apply_base_relocations(template: &ModuleTemplate, image_base: u64) -> Result<
 
 fn collect_template_exports(
     pe: &PE<'_>,
-) -> Result<(
-    Arc<[(String, TemplateExportTarget)]>,
-    Arc<[(usize, TemplateExportTarget)]>,
-), NtStatus> {
+) -> Result<
+    (
+        Arc<[(String, TemplateExportTarget)]>,
+        Arc<[(usize, TemplateExportTarget)]>,
+    ),
+    NtStatus,
+> {
     let mut exports_by_name = Vec::new();
     let mut exports_by_ordinal = Vec::new();
 
@@ -3162,10 +3180,7 @@ fn collect_template_exports(
         exports_by_name.push((name.to_ascii_lowercase(), target));
     }
 
-    Ok((
-        exports_by_name.into(),
-        exports_by_ordinal.into(),
-    ))
+    Ok((exports_by_name.into(), exports_by_ordinal.into()))
 }
 
 fn materialize_export_names(
@@ -3175,12 +3190,7 @@ fn materialize_export_names(
     template
         .exports_by_name
         .iter()
-        .map(|(name, target)| {
-            (
-                name.clone(),
-                materialize_export_target(target, image_base),
-            )
-        })
+        .map(|(name, target)| (name.clone(), materialize_export_target(target, image_base)))
         .collect::<Vec<_>>()
         .into()
 }
@@ -3204,10 +3214,12 @@ fn materialize_export_target(target: &TemplateExportTarget, image_base: u64) -> 
             dll_path: dll_path.clone(),
             symbol: symbol.clone(),
         },
-        TemplateExportTarget::ForwardOrdinal { dll_path, ordinal } => ExportTarget::ForwardOrdinal {
-            dll_path: dll_path.clone(),
-            ordinal: *ordinal,
-        },
+        TemplateExportTarget::ForwardOrdinal { dll_path, ordinal } => {
+            ExportTarget::ForwardOrdinal {
+                dll_path: dll_path.clone(),
+                ordinal: *ordinal,
+            }
+        }
     }
 }
 
@@ -3386,12 +3398,12 @@ fn build_process_environment(nt_path: &str, stack_top: u64) -> Result<(u64, u64,
 
     let load_head = (ldr_addr + core::mem::offset_of!(PebLdrData, in_load_order_module_list) as u64)
         as *mut ListEntry;
-    let memory_head =
-        (ldr_addr + core::mem::offset_of!(PebLdrData, in_memory_order_module_list) as u64)
-            as *mut ListEntry;
-    let init_head =
-        (ldr_addr + core::mem::offset_of!(PebLdrData, in_initialization_order_module_list) as u64)
-            as *mut ListEntry;
+    let memory_head = (ldr_addr
+        + core::mem::offset_of!(PebLdrData, in_memory_order_module_list) as u64)
+        as *mut ListEntry;
+    let init_head = (ldr_addr
+        + core::mem::offset_of!(PebLdrData, in_initialization_order_module_list) as u64)
+        as *mut ListEntry;
 
     let mut load_links = Vec::with_capacity(modules.len());
     let mut memory_links = Vec::with_capacity(modules.len());
@@ -3469,7 +3481,11 @@ fn build_process_environment(nt_path: &str, stack_top: u64) -> Result<(u64, u64,
         copy_utf16(base_buf, &base_utf16);
         cursor = base_buf + ((base_utf16.len() * 2 + 2) as u64);
 
-        let prev_load = if index == 0 { load_head } else { load_links[index - 1] };
+        let prev_load = if index == 0 {
+            load_head
+        } else {
+            load_links[index - 1]
+        };
         let next_load = if index + 1 == modules.len() {
             load_head
         } else {
@@ -3485,7 +3501,11 @@ fn build_process_environment(nt_path: &str, stack_top: u64) -> Result<(u64, u64,
         } else {
             memory_links[index + 1]
         };
-        let prev_init = if index == 0 { init_head } else { init_links[index - 1] };
+        let prev_init = if index == 0 {
+            init_head
+        } else {
+            init_links[index - 1]
+        };
         let next_init = if index + 1 == modules.len() {
             init_head
         } else {

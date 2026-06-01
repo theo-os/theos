@@ -4,11 +4,11 @@ use crate::allocator;
 use crate::pci::{self, PciAddress, PciDevice};
 use core::mem::size_of;
 use core::ptr::{read_volatile, write_volatile};
-use core::sync::atomic::{fence, Ordering};
+use core::sync::atomic::{Ordering, fence};
 use crabfs::device::BlockDevice;
 use crabfs::error::DeviceError;
-use x86_64::structures::paging::{Page, PageTableFlags, Size4KiB};
 use x86_64::VirtAddr;
+use x86_64::structures::paging::{Page, PageTableFlags, Size4KiB};
 
 const VIRTIO_VENDOR_ID: u16 = 0x1af4;
 const VIRTIO_DEVICE_ID_BLOCK_MODERN: u16 = 0x1042;

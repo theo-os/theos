@@ -1,6 +1,6 @@
+use x86_64::VirtAddr;
 use x86_64::registers::control::Cr3;
 use x86_64::structures::paging::{OffsetPageTable, PageTable, PhysFrame};
-use x86_64::VirtAddr;
 
 /// Initialize a new OffsetPageTable.
 ///

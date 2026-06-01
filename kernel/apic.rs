@@ -4,9 +4,9 @@ use crate::{
 };
 use core::sync::atomic::{AtomicU64, Ordering};
 use x86_64::{
+    PhysAddr, VirtAddr,
     registers::model_specific::Msr,
     structures::paging::{Page, PageSize, PageTableFlags, PhysFrame, Size4KiB},
-    PhysAddr, VirtAddr,
 };
 
 pub const APIC_BASE_MSR: u32 = 0x1B;

@@ -1,13 +1,12 @@
-[build]
-target = "x86_64-unknown-none"
+[alias]
+xtask = "run --package xtask --"
 
-[unstable]
-build-std = ["core", "alloc"]
-
-[target.x86_64-unknown-none]
+[target.x86_64-unknown-uefi]
+linker = "rust-lld"
 rustflags = [
-    "-C",
-    "relocation-model=static",
-    "-C",
-    "link-arg=-Tkernel/linker.ld",
+    "-C", "relocation-model=static",
+    "-C", "panic=abort",
 ]
+
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld"

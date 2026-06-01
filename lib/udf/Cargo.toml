@@ -1,0 +1,12 @@
+[package]
+name = "udf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+byteorder = { workspace = true }
+thiserror = { workspace = true }

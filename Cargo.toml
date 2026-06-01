@@ -1,0 +1,81 @@
+[workspace]
+members = [
+    "xtask",
+    "kernel",
+    "lib/crabfs",
+    "lib/iso9660",
+    "lib/loader",
+    "lib/regf",
+    "lib/udf",
+    "lib/wim_lzx",
+    "tools/run",
+    "tools/mkrootfs",
+    "tools/wimunpack",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace.lints.clippy]
+
+[workspace.dependencies]
+# Core kernel deps
+x86_64 = "0.15.4"
+uefi = { version = "0.37.0", features = ["alloc", "logger"] }
+thiserror = { version = "2.0.18", default-features = false }
+goblin = { version = "0.10.7", default-features = false, features = [
+    "pe32",
+    "pe64",
+    "elf64",
+    "elf32",
+] }
+linked_list_allocator = "0.10.6"
+spin = "0.12.0"
+pic8259 = "0.11.0"
+lz4_flex = { git = "https://github.com/PSeitz/lz4_flex", branch = "hc_pr", default-features = false, features = [
+    "checked-decode",
+] }
+
+# Tool/host deps
+clap = { version = "4.6.1", features = ["derive", "std", "help", "usage"] }
+byteorder = "1.5"
+bitflags = { version = "2.11.1", default-features = false }
+crc32fast = "1.5"
+flate2 = "1.1"
+rayon = "1.12.0"
+sha1 = "0.11.0"
+binrw = { version = "0.15.1", default-features = false }
+reqwest = { version = "0.13.4", default-features = false, features = [
+    "rustls-no-provider",
+    "stream",
+    "http2",
+] }
+tokio = { version = "1.52.3", default-features = false }
+indicatif = "0.18.4"
+libc = "0.2.186"
+errno = "0.3.14"
+futures-util = "0.3"
+getrandom = "0.4"
+hashbrown = "0.17"
+zlib-rs = "0.6.3"
+
+# Local library deps
+crabfs = { path = "lib/crabfs" }
+iso9660 = { path = "lib/iso9660" }
+loader = { path = "lib/loader" }
+regf = { path = "lib/regf" }
+udf = { path = "lib/udf" }
+wim_lzx = { path = "lib/wim_lzx" }
+
+[profile.dev]
+panic = "abort"
+split-debuginfo = "packed"
+
+[profile.release]
+panic = "abort"
+lto = "thin"
+strip = true
+opt-level = 3

@@ -1,6 +1,6 @@
 use crate::smp::MAX_CPUS;
 use crate::{apic, ktrace, println};
-use alloc::collections::{vec_deque::VecDeque, BTreeMap};
+use alloc::collections::{BTreeMap, vec_deque::VecDeque};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::arch::{asm, global_asm};
@@ -9,7 +9,7 @@ use core::cmp::min;
 use core::mem::size_of;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::{Lazy, Mutex};
-use x86_64::instructions::segmentation::{Segment, CS, SS};
+use x86_64::instructions::segmentation::{CS, SS, Segment};
 
 global_asm!(include_str!("switch.s"), options(att_syntax));
 

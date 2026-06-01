@@ -91,11 +91,14 @@ impl Read for FileReader {
         let mut total = 0usize;
         let mut remaining = std::cmp::min(buf.len() as u64, self.len - self.pos);
         while remaining > 0 {
-            let (extent_index, extent_offset) = locate_extent(&self.extents, self.pos)
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "extent lookup failed"))?;
+            let (extent_index, extent_offset) =
+                locate_extent(&self.extents, self.pos).ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "extent lookup failed")
+                })?;
             let (extent_start, extent_len) = self.extents[extent_index];
             let chunk = std::cmp::min(remaining, extent_len - extent_offset);
-            self.inner.seek(SeekFrom::Start(extent_start + extent_offset))?;
+            self.inner
+                .seek(SeekFrom::Start(extent_start + extent_offset))?;
             let read = self.inner.read(&mut buf[total..total + chunk as usize])?;
             self.pos += read as u64;
             total += read;
@@ -207,8 +210,10 @@ fn read_volume(file: &mut File) -> Result<VolumeInfo, Error> {
                 };
                 let map_table_len = read_u32(&descriptor, 264)?;
                 let map_count = read_u32(&descriptor, 268)?;
-                let partition_refs =
-                    parse_partition_maps(&descriptor[440..440 + map_table_len as usize], map_count)?;
+                let partition_refs = parse_partition_maps(
+                    &descriptor[440..440 + map_table_len as usize],
+                    map_count,
+                )?;
                 logical_volume = Some((block_size, fsd, partition_refs));
             }
             TAGID_TERMINATING => break,
@@ -219,8 +224,13 @@ fn read_volume(file: &mut File) -> Result<VolumeInfo, Error> {
 
     let partition = partition.ok_or(Error::InvalidImage)?;
     let (block_size, fsd_ad, partition_refs) = logical_volume.ok_or(Error::InvalidImage)?;
-    if !partition_refs.iter().any(|&part_num| part_num == partition.number) {
-        return Err(Error::Unsupported("logical volume partition map does not match partition"));
+    if !partition_refs
+        .iter()
+        .any(|&part_num| part_num == partition.number)
+    {
+        return Err(Error::Unsupported(
+            "logical volume partition map does not match partition",
+        ));
     }
 
     let fsd_sector = partition.start_lba as u64 + fsd_ad.lba as u64;
@@ -275,12 +285,18 @@ fn parse_partition_maps(data: &[u8], count: u32) -> Result<Vec<u16>, Error> {
         offset += map_len;
     }
     if refs.is_empty() {
-        return Err(Error::Unsupported("only type 1 partition maps are supported"));
+        return Err(Error::Unsupported(
+            "only type 1 partition maps are supported",
+        ));
     }
     Ok(refs)
 }
 
-fn read_file_entry(file: &mut File, volume: &VolumeInfo, icb: LongAd) -> Result<FileEntryInfo, Error> {
+fn read_file_entry(
+    file: &mut File,
+    volume: &VolumeInfo,
+    icb: LongAd,
+) -> Result<FileEntryInfo, Error> {
     let offset = icb_to_offset(volume, icb)?;
     let mut block = vec![0u8; volume.block_size as usize];
     file.seek(SeekFrom::Start(offset))?;
@@ -352,7 +368,9 @@ fn extents_for_entry(
         ICBTAG_FLAG_AD_IN_ICB => Ok(vec![]),
         ICBTAG_FLAG_AD_SHORT => parse_short_ad_extents(volume, &entry.allocation_descriptors),
         ICBTAG_FLAG_AD_LONG => parse_long_ad_extents(volume, &entry.allocation_descriptors),
-        _ => Err(Error::Unsupported("unsupported allocation descriptor format")),
+        _ => Err(Error::Unsupported(
+            "unsupported allocation descriptor format",
+        )),
     }
 }
 
@@ -385,7 +403,9 @@ fn parse_long_ad_extents(volume: &VolumeInfo, data: &[u8]) -> Result<Vec<(u64, u
         }
         let partition_number = translate_partition_ref(volume, partition)?;
         if partition_number != volume.partition.number {
-            return Err(Error::Unsupported("cross-partition file extents are not supported"));
+            return Err(Error::Unsupported(
+                "cross-partition file extents are not supported",
+            ));
         }
         let offset = (volume.partition.start_lba as u64 + lba as u64) * volume.block_size as u64;
         extents.push((offset, len as u64));

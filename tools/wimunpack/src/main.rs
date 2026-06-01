@@ -1,8 +1,8 @@
-use binrw::{binrw, BinReaderExt};
+use binrw::{BinReaderExt, binrw};
 use clap::Parser;
 use rayon::prelude::*;
 use std::collections::HashMap;
-use std::fs::{create_dir_all, File};
+use std::fs::{File, create_dir_all};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use thiserror::Error;

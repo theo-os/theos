@@ -1,0 +1,23 @@
+[package]
+name = "kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kernel"
+path = "kernel.rs"
+
+[dependencies]
+crabfs = { workspace = true }
+loader = { workspace = true }
+regf = { workspace = true }
+x86_64 = { workspace = true }
+uefi = { workspace = true }
+thiserror = { workspace = true }
+goblin = { workspace = true }
+linked_list_allocator = { workspace = true }
+spin = { workspace = true }
+pic8259 = { workspace = true }
+lz4_flex = { workspace = true }
+bitflags = { workspace = true }
