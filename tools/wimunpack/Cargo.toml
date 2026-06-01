@@ -12,6 +12,8 @@ path = "src/main.rs"
 iso9660 = { workspace = true }
 udf = { workspace = true }
 wim_lzx = { workspace = true }
+wim_lzms = { workspace = true }
+indicatif = { workspace = true }
 binrw = { workspace = true, features = ["std"] }
 bitflags = { workspace = true }
 clap = { workspace = true }

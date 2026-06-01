@@ -33,6 +33,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         env_path("BUCK_MKROOTFS_BIN").unwrap_or_else(|| target_dir.join(&profile).join("mkrootfs"));
     let wimunpack_bin = env_path("BUCK_WIMUNPACK_BIN")
         .unwrap_or_else(|| target_dir.join(&profile).join("wimunpack"));
+    let fetch_rootfs_bin = env_path("BUCK_FETCH_ROOTFS_BIN")
+        .unwrap_or_else(|| target_dir.join(&profile).join("fetch-rootfs"));
     let native_init_dir = target_dir.join("xtask/native_init");
     let native_init_exe =
         env_path("BUCK_NATIVE_INIT_EXE").unwrap_or_else(|| native_init_dir.join("init.exe"));
@@ -87,6 +89,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         prepare_rootfs_staging(
             effective_profile,
             &wimunpack_bin,
+            &fetch_rootfs_bin,
             &rootfs_iso,
             rootfs_manifest,
             &rootfs_staging_dir,
@@ -101,7 +104,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     &rootfs_staging_dir,
                 )?;
             }
-            RootfsProfile::WindowsReal => {
+            RootfsProfile::WindowsReal | RootfsProfile::Uup => {
                 install_windows_real_init_to_dir(&rootfs_staging_dir)?;
             }
         }
@@ -230,6 +233,8 @@ fn resolve_rootfs_size_mib(source: &Path) -> Result<String, Box<dyn Error>> {
 enum RootfsProfile {
     Windows,
     WindowsReal,
+    /// Like WindowsReal but source is a downloaded UUP ESD rather than an ISO.
+    Uup,
 }
 
 fn resolve_rootfs_profile(profile: &str, iso_path: &Path) -> Result<RootfsProfile, Box<dyn Error>> {
@@ -245,19 +250,31 @@ fn resolve_rootfs_profile(profile: &str, iso_path: &Path) -> Result<RootfsProfil
                 .into())
             }
         }
-        "windows-real" | "auto" => {
+        "windows-real" => {
             if iso_path.exists() {
                 Ok(RootfsProfile::WindowsReal)
             } else {
                 Err(format!(
-                    "ISO not found at {}; a real Windows ISO is required to build the rootfs",
+                    "ROOTFS_PROFILE=windows-real requested but ISO not found at {}",
                     iso_path.display()
                 )
                 .into())
             }
         }
+        "auto" => {
+            if iso_path.exists() {
+                Ok(RootfsProfile::WindowsReal)
+            } else {
+                eprintln!(
+                    "info: no ISO found at {}; will fetch Windows via UUP",
+                    iso_path.display()
+                );
+                Ok(RootfsProfile::Uup)
+            }
+        }
+        "uup" => Ok(RootfsProfile::Uup),
         other => Err(format!(
-            "unsupported ROOTFS_PROFILE={other}; expected auto, windows, or windows-real (minimal is no longer supported)"
+            "unsupported ROOTFS_PROFILE={other}; expected auto, windows, windows-real, or uup"
         )
         .into()),
     }
@@ -270,13 +287,14 @@ fn rootfs_manifest_for_profile<'a>(
 ) -> Option<&'a Path> {
     match profile {
         RootfsProfile::Windows => Some(windows_manifest),
-        RootfsProfile::WindowsReal => Some(windows_real_manifest),
+        RootfsProfile::WindowsReal | RootfsProfile::Uup => Some(windows_real_manifest),
     }
 }
 
 fn prepare_rootfs_staging(
     profile: RootfsProfile,
     wimunpack_bin: &Path,
+    fetch_rootfs_bin: &Path,
     iso_path: &Path,
     windows_rootfs_manifest: Option<&Path>,
     staging: &Path,
@@ -286,6 +304,18 @@ fn prepare_rootfs_staging(
         return Err("windows profile requires include-list manifest".into());
     };
     let expected_paths = read_include_manifest_paths(windows_rootfs_manifest)?;
+
+    if profile == RootfsProfile::Uup {
+        return prepare_rootfs_staging_uup(
+            wimunpack_bin,
+            fetch_rootfs_bin,
+            windows_rootfs_manifest,
+            staging,
+            extract_manifest,
+            &expected_paths,
+        );
+    }
+
     let extract_signature =
         rootfs_extract_signature(profile, iso_path, windows_rootfs_manifest, wimunpack_bin)?;
     if staging.exists()
@@ -310,6 +340,45 @@ fn prepare_rootfs_staging(
     Ok(())
 }
 
+fn prepare_rootfs_staging_uup(
+    wimunpack_bin: &Path,
+    fetch_rootfs_bin: &Path,
+    windows_rootfs_manifest: &Path,
+    staging: &Path,
+    extract_manifest: &Path,
+    expected_paths: &[PathBuf],
+) -> Result<(), Box<dyn Error>> {
+    // Check cache: if we already have staging with all files, skip re-extraction.
+    // For UUP the "extract signature" is just based on the manifest file + wimunpack binary.
+    let extract_signature = format!(
+        "profile=uup\ninclude_list={}\nwimunpack={}\n",
+        file_signature(windows_rootfs_manifest)?,
+        file_signature(wimunpack_bin)?,
+    );
+    if staging.exists()
+        && manifest_matches(extract_manifest, &extract_signature)?
+        && staging_contains_paths(staging, expected_paths)
+    {
+        eprintln!("info: reusing cached UUP rootfs extraction");
+        return Ok(());
+    }
+
+    // fetch-rootfs handles download + extraction in one step; use interactive so progress shows
+    eprintln!("info: fetching Windows rootfs via UUP...");
+    remove_if_exists(staging)?;
+    run_interactive_cmd(
+        Command::new(fetch_rootfs_bin)
+            .arg("--output")
+            .arg(staging)
+            .arg("--include-list")
+            .arg(windows_rootfs_manifest)
+            .arg("--wimunpack")
+            .arg(wimunpack_bin),
+    )?;
+    write_manifest(extract_manifest, &extract_signature)?;
+    Ok(())
+}
+
 fn rootfs_extract_signature(
     profile: RootfsProfile,
     iso_path: &Path,
@@ -321,6 +390,7 @@ fn rootfs_extract_signature(
         match profile {
             RootfsProfile::Windows => "windows",
             RootfsProfile::WindowsReal => "windows-real",
+            RootfsProfile::Uup => "uup",
         },
         file_signature(iso_path)?,
         file_signature(windows_rootfs_manifest)?,
@@ -342,9 +412,12 @@ fn rootfs_build_signature(
     signature.push_str(match profile {
         RootfsProfile::Windows => "profile=windows\n",
         RootfsProfile::WindowsReal => "profile=windows-real\n",
+        RootfsProfile::Uup => "profile=uup\n",
     });
     if let Some(manifest) = windows_rootfs_manifest {
-        signature.push_str(&format!("iso={}\n", file_signature(iso_path)?));
+        if profile != RootfsProfile::Uup {
+            signature.push_str(&format!("iso={}\n", file_signature(iso_path)?));
+        }
         signature.push_str(&format!("include_list={}\n", file_signature(manifest)?));
     }
     signature.push_str(&format!("rootfs_size_mib={rootfs_size_mib}\n"));
@@ -355,7 +428,7 @@ fn rootfs_build_signature(
             signature.push_str(&format!("child={}\n", file_signature(child_exe)?));
             signature.push_str(&format!("ntdll={}\n", file_signature(ntdll_dll)?));
         }
-        RootfsProfile::WindowsReal => {
+        RootfsProfile::WindowsReal | RootfsProfile::Uup => {
             signature.push_str("overlay=windows-real\n");
         }
     }

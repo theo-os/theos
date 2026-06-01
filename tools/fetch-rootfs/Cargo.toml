@@ -1,0 +1,20 @@
+[package]
+name = "fetch-rootfs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "fetch-rootfs"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+indicatif = { workspace = true }
+thiserror = { workspace = true }
+futures-util = { workspace = true }
+sha1 = { workspace = true }
+getrandom = { workspace = true }
+base64 = { workspace = true }

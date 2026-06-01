@@ -21,3 +21,5 @@ target/
 .rootfs-build.manifest
 .rootfs-extract.manifest
 .invest-*
+.claude/settings.local.json
+.uup-cache/

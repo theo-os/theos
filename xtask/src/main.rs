@@ -234,6 +234,7 @@ fn run_qemu(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let kernel_bin = uefi_target_dir.join("kernel.efi");
     let mkrootfs_bin = target_dir.join(&profile).join("mkrootfs");
     let wimunpack_bin = target_dir.join(&profile).join("wimunpack");
+    let fetch_rootfs_bin = target_dir.join(&profile).join("fetch-rootfs");
     let run_bin = target_dir.join(&profile).join("run");
     let native_init_dir = target_dir.join("xtask/native_init");
     let ovmf_fd = locate_or_download_ovmf(root)?;
@@ -243,6 +244,7 @@ fn run_qemu(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         .env("BUCK_KERNEL_BIN", &kernel_bin)
         .env("BUCK_MKROOTFS_BIN", &mkrootfs_bin)
         .env("BUCK_WIMUNPACK_BIN", &wimunpack_bin)
+        .env("BUCK_FETCH_ROOTFS_BIN", &fetch_rootfs_bin)
         .env("BUCK_NATIVE_INIT_EXE", native_init_dir.join("init.exe"))
         .env("BUCK_CHILD_EXE", native_init_dir.join("child.exe"))
         .env("BUCK_NTDLL_DLL", native_init_dir.join("ntdll.dll"));

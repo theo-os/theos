@@ -8,9 +8,11 @@ members = [
     "lib/regf",
     "lib/udf",
     "lib/wim_lzx",
+    "lib/wim_lzms",
     "tools/run",
     "tools/mkrootfs",
     "tools/wimunpack",
+    "tools/fetch-rootfs",
 ]
 resolver = "3"
 
@@ -24,6 +26,7 @@ license = "Apache-2.0"
 [workspace.dependencies]
 # Core kernel deps
 x86_64 = "0.15.4"
+rootcause = "0.12.1"
 uefi = { version = "0.37.0", features = ["alloc", "logger"] }
 thiserror = { version = "2.0.18", default-features = false }
 goblin = { version = "0.10.7", default-features = false, features = [
@@ -49,16 +52,20 @@ rayon = "1.12.0"
 sha1 = "0.11.0"
 binrw = { version = "0.15.1", default-features = false }
 reqwest = { version = "0.13.4", default-features = false, features = [
-    "rustls-no-provider",
+    "rustls",
     "stream",
     "http2",
+    "json",
 ] }
-tokio = { version = "1.52.3", default-features = false }
+tokio = { version = "1.52.3", default-features = false, features = ["rt", "rt-multi-thread", "macros"] }
 indicatif = "0.18.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 libc = "0.2.186"
 errno = "0.3.14"
 futures-util = "0.3"
 getrandom = "0.4"
+base64 = "0.22"
 hashbrown = "0.17"
 zlib-rs = "0.6.3"
 
@@ -69,6 +76,7 @@ loader = { path = "lib/loader" }
 regf = { path = "lib/regf" }
 udf = { path = "lib/udf" }
 wim_lzx = { path = "lib/wim_lzx" }
+wim_lzms = { path = "lib/wim_lzms" }
 
 [profile.dev]
 panic = "abort"
