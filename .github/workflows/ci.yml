@@ -14,10 +14,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install Watchman
-        run: |
-          sudo apt update -y
-          sudo apt install -y watchman
       - name: Install Nightly Rust
         uses: dtolnay/rust-toolchain@nightly
         with:

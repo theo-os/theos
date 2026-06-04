@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::UNIX_EPOCH;
 
-const DEFAULT_WINDOWS_ISO: &str = "Win11_25H2_English_x64_v2.iso";
+const DEFAULT_WINDOWS_ISO: &str = "Windows.iso";
 const WINDOWS_ROOTFS_MANIFEST: &str = "tools/windows-rootfs.txt";
 const WINDOWS_ROOTFS_REAL_MANIFEST: &str = "tools/windows-rootfs-real.txt";
 

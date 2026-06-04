@@ -12,7 +12,7 @@ use crabfs::device::BlockDevice;
 use crabfs::error::DeviceError;
 use crabfs::on_disk::superblock::Superblock;
 use crabfs::reader;
-use spin::{Lazy, Mutex};
+use spin::{LazyLock, Mutex};
 
 const FILE_MAX_SLOTS: usize = 64;
 const PIPE_CAPACITY: usize = 65536;
@@ -903,8 +903,9 @@ impl Vfs {
     }
 }
 
-pub static VFS: Lazy<Mutex<Option<Vfs>>> = Lazy::new(|| Mutex::new(None));
-static UEFI_ROOT_DEVICE: Lazy<Mutex<Option<UefiBlockDevice>>> = Lazy::new(|| Mutex::new(None));
+pub static VFS: LazyLock<Mutex<Option<Vfs>>> = LazyLock::new(|| Mutex::new(None));
+static UEFI_ROOT_DEVICE: LazyLock<Mutex<Option<UefiBlockDevice>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 pub fn mount_root(dev: VirtioBlkDevice) -> Result<(), VfsError> {
     *VFS.lock() = Some(Vfs::mount(RootDevice::Virtio(dev))?);

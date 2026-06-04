@@ -114,7 +114,6 @@ fn build_kernel(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     run_cmd(
         Command::new("cargo")
             .args([
-                "+nightly",
                 "build",
                 "-p",
                 "kernel",
