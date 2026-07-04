@@ -34,6 +34,7 @@ rust_binary(
 genrule(
     name = "kernel_artifact",
     out = "kernel.efi",
+    cmd_exe = "copy $(location :kernel) %OUT%",
     bash = "cp $(location :kernel) $OUT",
     platform_override = "toolchains//:uefi",
     visibility = ["PUBLIC"],

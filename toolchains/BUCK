@@ -1,7 +1,11 @@
-load("@prelude//toolchains:python.bzl", "system_python_bootstrap_toolchain")
+load("@prelude//toolchains:python.bzl", "remote_python_toolchain")
 load("@prelude//toolchains:cxx.bzl", "system_cxx_toolchain")
 load("@prelude//toolchains:genrule.bzl", "system_genrule_toolchain")
 load("@prelude//toolchains:rust.bzl", "system_rust_toolchain")
+load(":hermetic_toolchain.bzl", "hermetic_cxx_toolchain")
+load(":windows_cc.bzl", "win_cc_toolchain_info")
+
+# ── Platform targets ─────────────────────────────────────────────────────────
 
 platform(
     name = "uefi",
@@ -12,15 +16,19 @@ platform(
     visibility = ["PUBLIC"],
 )
 
-system_python_bootstrap_toolchain(
-    name = "python_bootstrap",
-    visibility = ["PUBLIC"]
+# ── Bootstrap toolchains (always from system) ─────────────────────────────────
+
+remote_python_toolchain(
+    name = "python",
+    visibility = ["PUBLIC"],
 )
 
 system_genrule_toolchain(
     name = "genrule",
     visibility = ["PUBLIC"],
 )
+
+# ── Rust toolchains ───────────────────────────────────────────────────────────
 
 system_rust_toolchain(
     name = "rust",
@@ -41,14 +49,121 @@ system_rust_toolchain(
     ],
 )
 
-system_cxx_toolchain(
-    name = "cxx",
+# ── LLVM prebuilt distribution (clang-cl, lld-link, llvm-lib, …) ─────────────
+#
+# Provides a hermetic LLVM toolchain without requiring a system Visual Studio
+# installation.  Downloaded once from GitHub releases and cached by Buck2.
+#
+# To update to a newer LLVM version:
+#   1. Change LLVM_VERSION below.
+#   2. Compute the new sha256:
+#        $uri  = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$ver/clang+llvm-$ver-x86_64-pc-windows-msvc.tar.xz"
+#        $hash = (Invoke-WebRequest $uri -OutFile llvm.tar.xz; Get-FileHash llvm.tar.xz -Algorithm SHA256).Hash.ToLower()
+#   3. Update LLVM_SHA256 below.
+
+LLVM_VERSION = "22.1.8"
+LLVM_SHA256  = "d96c2cc1736f4eb7fa43cb9bbdf56d93551a9ae0a9aadb9c99c3c3b2b712a234"
+LLVM_ARCHIVE = "clang+llvm-{}-x86_64-pc-windows-msvc.tar.xz".format(LLVM_VERSION)
+LLVM_PREFIX  = "clang+llvm-{}-x86_64-pc-windows-msvc".format(LLVM_VERSION)
+
+http_archive(
+    name = "llvm_win64",
+    urls = [
+        "https://github.com/llvm/llvm-project/releases/download/llvmorg-{}/{}".format(
+            LLVM_VERSION,
+            LLVM_ARCHIVE,
+        ),
+    ],
+    sha256 = LLVM_SHA256,
+    strip_prefix = LLVM_PREFIX,
     visibility = ["PUBLIC"],
 )
 
-system_cxx_toolchain(
-    name = "cxx_uefi",
-    link_style = "static",
-    linker = "toolchains/lld-link.sh",
+# ── MSVC sysroot (via xwin) ───────────────────────────────────────────────────
+#
+# Downloads and splats the MSVC CRT headers/libs + Windows SDK headers/libs
+# using xwin (https://github.com/Jake-Shadle/xwin).
+#
+# xwin caches downloads in %USERPROFILE%\.xwin-cache so subsequent builds
+# are instant.  Buck2 also caches the genrule output in buck-out, so xwin
+# only runs the very first time (or when msvc_sysroot_version.txt changes).
+#
+# To pull a newer SDK:
+#   1. Edit toolchains/msvc_sysroot_version.txt
+#   2. buck2 build toolchains//:msvc_sysroot
+
+XWIN_VERSION = "0.9.0"
+
+XWIN_SHA256 = select({
+    "prelude//os:windows": "36a03b1bc21ead290eda3891b5ddfe3219eed45dd592329412248d143a26dda2",
+    "prelude//os:linux":   "31e1033f30608ba6b821d17f1461042bd54c23424813c9b4e9ae15b6d32fa4cd",
+})
+
+XWIN_PREFIX = select({
+    "prelude//os:windows": "xwin-{}-x86_64-pc-windows-msvc".format(XWIN_VERSION),
+    "prelude//os:linux":   "xwin-{}-x86_64-unknown-linux-musl".format(XWIN_VERSION),
+})
+
+http_archive(
+    name = "xwin_bin",
+    urls = [
+        select({
+            "prelude//os:windows": "https://github.com/Jake-Shadle/xwin/releases/download/{}/xwin-{}-x86_64-pc-windows-msvc.tar.gz".format(XWIN_VERSION, XWIN_VERSION),
+            "prelude//os:linux":   "https://github.com/Jake-Shadle/xwin/releases/download/{}/xwin-{}-x86_64-unknown-linux-musl.tar.gz".format(XWIN_VERSION, XWIN_VERSION),
+        })
+    ],
+    sha256 = XWIN_SHA256,
+    strip_prefix = XWIN_PREFIX,
     visibility = ["PUBLIC"],
+)
+
+genrule(
+    name = "msvc_sysroot",
+    # Changing this file invalidates the cached output and forces a re-splat.
+    srcs = ["msvc_sysroot_version.txt"],
+    out = "sysroot",
+    # On Windows, Buck2 runs cmd_exe commands as: cmd.exe /v:off /c "<cmd>"
+    # %OUT% is an env var that Buck2 sets to the output path before invocation.
+    # "network_access" label forces local-only execution (no remote execution),
+    # because xwin downloads from Microsoft's CDN.  See genrule_local_labels.bzl.
+    cmd_exe = "$(location :xwin_bin)\\xwin.exe --accept-license --arch x86_64 --sdk-version 10.0.22621 splat --output %OUT% --disable-symlinks",
+    bash = "$(location :xwin_bin)/xwin --accept-license --arch x86_64 --sdk-version 10.0.22621 splat --output $OUT --disable-symlinks",
+    labels = ["network_access"],
+    visibility = ["PUBLIC"],
+)
+
+# ── Hermetic CXX toolchains (clang-cl + lld-link + xwin sysroot) ──────────────
+#
+# Use these toolchains to compile and link Windows PE binaries without
+# relying on a system Visual Studio installation.
+# toolchains//:cxx is the default toolchain for host/default targets.
+# toolchains//:cxx_uefi is used for UEFI target builds.
+
+hermetic_cxx_toolchain(
+    name = "cxx",
+    llvm_dist    = ":llvm_win64",
+    msvc_sysroot = ":msvc_sysroot",
+    link_style   = "static",
+    visibility   = ["PUBLIC"],
+)
+
+hermetic_cxx_toolchain(
+    name = "cxx_uefi",
+    llvm_dist    = ":llvm_win64",
+    msvc_sysroot = ":msvc_sysroot",
+    link_style   = "static",
+    visibility   = ["PUBLIC"],
+)
+
+# ── WinCCInfo for custom Windows PE rules ──────────────────────────────────
+#
+# Provides WinCCInfo (binary paths + sysroot flags) to Starlark rules that
+# drive clang-cl / lld-link directly via ctx.actions.run() instead of shell
+# scripts.  Used by userspace/native_init and any future Windows PE targets.
+
+win_cc_toolchain_info(
+    name = "win_cc_tools",
+    llvm_dist    = ":llvm_win64",
+    msvc_sysroot = ":msvc_sysroot",
+    visibility   = ["PUBLIC"],
 )

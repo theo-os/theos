@@ -11,17 +11,13 @@ on:
 jobs:
   build:
     name: Build and Lint
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Install Watchman
-        run: |
-          sudo apt update -y
-          sudo apt install -y watchman
       - name: Install Buck2
         uses: dtolnay/install-buck2@latest
-      - name: Install Nightly Rust
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy, rust-src
           targets: x86_64-unknown-uefi

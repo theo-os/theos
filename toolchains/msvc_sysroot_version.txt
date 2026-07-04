@@ -1,0 +1,3 @@
+# Bump this string to force re-splatting the sysroot (e.g. to pull a newer SDK).
+# Format: <xwin-sdk-version>-<arch>
+10.0.22621-x86_64

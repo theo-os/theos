@@ -10,8 +10,9 @@ use crate::on_disk::superblock::Superblock;
 use crate::reader;
 use crate::writer::{MkfsOptions, mkfs};
 use std::fs;
-use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::string::String;
 use std::vec;
 use std::vec::Vec;
@@ -155,6 +156,31 @@ pub fn pack_from_directory<D: BlockDevice>(
     Ok(report)
 }
 
+#[cfg(unix)]
+fn get_file_metadata(meta: &fs::Metadata) -> (u16, u32, u32) {
+    (meta.mode() as u16, meta.uid(), meta.gid())
+}
+
+#[cfg(not(unix))]
+fn get_file_metadata(meta: &fs::Metadata) -> (u16, u32, u32) {
+    let mode = if meta.permissions().readonly() { 0o444 } else { 0o666 };
+    let mode = if meta.is_dir() { mode | 0o111 } else { mode };
+    (mode as u16, 0, 0)
+}
+
+#[cfg(unix)]
+fn is_special_file(file_type: &fs::FileType) -> bool {
+    file_type.is_char_device()
+        || file_type.is_block_device()
+        || file_type.is_fifo()
+        || file_type.is_socket()
+}
+
+#[cfg(not(unix))]
+fn is_special_file(_file_type: &fs::FileType) -> bool {
+    false
+}
+
 fn collect_tree(
     root: &Path,
     path: &Path,
@@ -164,9 +190,7 @@ fn collect_tree(
     report: &mut PackReport,
 ) -> Result<usize, WriteError> {
     let meta = fs::symlink_metadata(path).map_err(|_| WriteError::Device(DeviceError::Io))?;
-    let mode = meta.mode() as u16;
-    let uid = meta.uid();
-    let gid = meta.gid();
+    let (mode, uid, gid) = get_file_metadata(&meta);
 
     let placeholder = Node {
         parent_index,
@@ -219,11 +243,7 @@ fn collect_tree(
     } else if file_type.is_file() {
         let data = fs::read(path).map_err(|_| WriteError::Device(DeviceError::Io))?;
         nodes[index].kind = NodeKind::File { data };
-    } else if file_type.is_char_device()
-        || file_type.is_block_device()
-        || file_type.is_fifo()
-        || file_type.is_socket()
-    {
+    } else if is_special_file(&file_type) {
         report
             .skipped
             .push(path.strip_prefix(root).unwrap_or(path).to_path_buf());
@@ -437,7 +457,19 @@ mod tests {
         fs::create_dir_all(root.join("bin")).unwrap();
         let mut file = File::create(root.join("bin/hello")).unwrap();
         writeln!(file, "hello world").unwrap();
-        std::os::unix::fs::symlink("/bin/hello", root.join("hello-link")).unwrap();
+        let has_symlink = {
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink("/bin/hello", root.join("hello-link")).unwrap();
+                true
+            }
+            #[cfg(windows)]
+            {
+                std::os::windows::fs::symlink_file("/bin/hello", root.join("hello-link")).is_ok()
+            }
+            #[cfg(not(any(unix, windows)))]
+            false
+        };
 
         let mut dev = MemDevice {
             data: vec![0u8; 8 * 1024 * 1024],
@@ -453,12 +485,15 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(report.packed_inodes >= 3);
+        let expected_inodes = if has_symlink { 3 } else { 2 };
+        assert!(report.packed_inodes >= expected_inodes);
 
         let sb = reader::read_superblock(&mut dev).unwrap();
         let root_entries = reader::list_dir_entries(&mut dev, &sb, sb.rootino).unwrap();
         assert!(root_entries.iter().any(|entry| entry.name == "bin"));
-        assert!(root_entries.iter().any(|entry| entry.name == "hello-link"));
+        if has_symlink {
+            assert!(root_entries.iter().any(|entry| entry.name == "hello-link"));
+        }
 
         fs::remove_dir_all(root).unwrap();
     }
